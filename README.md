@@ -94,7 +94,9 @@ sentiment_analysis_project/
 │   │   └── sentiment.py     # Pipeline NLP (pulizia, lingua, aspetti, RoBERTa)
 │   └── dashboard/
 │       └── app.py           # Dashboard analitica Streamlit
-├── docker-compose.yml       # Setup MongoDB e Mongo Express
+├── Dockerfile               # Build dell'immagine Streamlit
+├── .dockerignore            # Ottimizzazione del contesto Docker
+├── docker-compose.yml       # Stack completo: MongoDB, Mongo Express, Dashboard
 ├── requirements.txt         # Dipendenze Python bloccate
 ├── .env.example             # Template variabili d'ambiente
 └── README.md                # Documentazione tecnica
@@ -102,9 +104,22 @@ sentiment_analysis_project/
 
 ---
 
-## 🛠️ Guida Rapida all'Avvio
+## 🛠️ Guida all'Avvio
 
-### 1. Avviare MongoDB con Docker
+### Modalità 1: Stack Completo con Docker (Consigliata)
+Avvia MongoDB, Mongo Express e la Dashboard Streamlit con un solo comando:
+```bash
+docker compose up -d --build
+```
+- **Dashboard Streamlit:** `http://localhost:8501`
+- **Mongo Express (Web GUI per DB):** `http://localhost:8081` (user: `admin`, pass: `admin`)
+- **MongoDB:** `localhost:27017`
+
+---
+
+### Modalità 2: Esecuzione Locale con Ambiente Virtuale
+
+#### 1. Avviare il Database MongoDB (se non già attivo)
 ```bash
 docker run -d --name sentiment_mongodb -p 27017:27017 \
   -e MONGO_INITDB_ROOT_USERNAME=root \
@@ -113,21 +128,21 @@ docker run -d --name sentiment_mongodb -p 27017:27017 \
   --restart unless-stopped mongo:6.0
 ```
 
-### 2. Configurare l'Ambiente Virtuale Python
+#### 2. Configurare l'Ambiente Python
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
-*(Nel file `.env`, inserire la propria `YOUTUBE_API_KEY`).*
+*(Inserire la propria `YOUTUBE_API_KEY` nel file `.env`).*
 
-### 3. Inizializzare Database, Regole di Governance e Indici
+#### 3. Inizializzare Database, Regole di Governance e Indici
 ```bash
 python src/db/init_db.py
 ```
 
-### 4. Eseguire l'Ingestione dei Dati (Bronze Layer)
+#### 4. Eseguire l'Ingestione dei Dati (Bronze Layer)
 - **Da YouTube:**
   ```bash
   python src/ingestion/youtube.py
@@ -137,12 +152,12 @@ python src/db/init_db.py
   python src/ingestion/letterboxd.py
   ```
 
-### 5. Elaborare i Dati con la Pipeline NLP (Silver Layer)
+#### 5. Elaborare i Dati con la Pipeline NLP (Silver Layer)
 ```bash
 python src/processing/sentiment.py
 ```
 
-### 6. Lanciare la Dashboard Analitica (Gold Layer)
+#### 6. Lanciare la Dashboard Analitica (Gold Layer)
 ```bash
 streamlit run src/dashboard/app.py
 ```

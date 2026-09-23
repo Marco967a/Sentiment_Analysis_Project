@@ -28,6 +28,19 @@ services:
     depends_on:
       - mongodb
 
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentiment_dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      - MONGODB_URI=mongodb://root:example_password@mongodb:27017/
+      - MONGODB_DB_NAME=sentiment_db
+    depends_on:
+      - mongodb
+
 volumes:
   mongodb_data:
-
