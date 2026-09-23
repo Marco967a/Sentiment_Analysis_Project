@@ -68,11 +68,14 @@ def main():
     # Barra laterale dei filtri
     st.sidebar.header("🔍 Filtri di Analisi")
     
-    available_platforms = db["silver_data"].distinct("_governance.source_platform")
+    # Recupero piattaforme e aspetti sanitizzati (escludendo None e stringhe vuote)
+    raw_platforms = db["silver_data"].distinct("_governance.source_platform")
+    available_platforms = sorted([p for p in raw_platforms if isinstance(p, str) and p.strip()])
     selected_platform = st.sidebar.selectbox("Piattaforma:", ["Tutte"] + available_platforms)
 
-    available_aspects = db["silver_data"].distinct("aspects")
-    selected_aspect = st.sidebar.selectbox("Aspetto del Film (Topic):", ["Tutti"] + sorted(available_aspects))
+    raw_aspects = db["silver_data"].distinct("aspects")
+    available_aspects = sorted([a for a in raw_aspects if isinstance(a, str) and a.strip()])
+    selected_aspect = st.sidebar.selectbox("Aspetto del Film (Topic):", ["Tutti"] + available_aspects)
 
     # Costruzione query filtro MongoDB
     filter_query = {}
