@@ -1,6 +1,6 @@
 import os
 from googleapiclient.discovery import build
-from datetime import datetime
+from datetime import datetime, timezone
 import sys
 from dotenv import load_dotenv
 
@@ -47,7 +47,7 @@ def get_youtube_comments(video_id, max_results=100):
                 "published_at": comment.get("publishedAt"),
                 "_governance": {
                     "source_platform": "youtube",
-                    "extraction_timestamp": datetime.utcnow().isoformat(),
+                    "extraction_timestamp": datetime.now(timezone.utc).isoformat(),
                     "api_version": "v3"
                 }
             }

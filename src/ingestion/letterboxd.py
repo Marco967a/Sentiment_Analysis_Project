@@ -1,6 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timezone
 import sys
 import os
 
@@ -55,7 +55,7 @@ def scrape_letterboxd_reviews(film_slug, max_pages=1):
                 "text": text,
                 "_governance": {
                     "source_platform": "letterboxd",
-                    "extraction_timestamp": datetime.utcnow().isoformat(),
+                    "extraction_timestamp": datetime.now(timezone.utc).isoformat(),
                     "raw_url": url
                 }
             }

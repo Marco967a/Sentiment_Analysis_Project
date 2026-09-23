@@ -1,46 +1,110 @@
-# Sentiment Analysis & Social Listening Platform
+# 🎬 Sentiment Analysis & Social Listening Hub
 
-Pipeline di Sentiment Analysis e Social Listening basata sull'architettura **Medallion (Bronze, Silver, Gold)**, con focus sulla **Data Governance** e storage su **MongoDB**.
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![MongoDB 6.0](https://img.shields.io/badge/MongoDB-6.0-green.svg)](https://www.mongodb.com/)
+[![Transformers](https://img.shields.io/badge/%F0%9F%A4%97-Transformers-yellow.svg)](https://huggingface.co/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.32%2B-red.svg)](https://streamlit.io/)
 
-Il sistema raccoglie dati da piattaforme social e di recensioni (YouTube e Letterboxd), arricchisce i testi tramite modelli **Transformer (NLP)** e offre dashboard analitiche per il monitoraggio dei trend.
-
----
-
-## Architettura Dati & Governance
-
-L'architettura segue il pattern a strati:
-- **Bronze Layer (Raw Data):** Ingestione dei dati grezzi (`raw_youtube`, `raw_letterboxd`) tracciando il *Data Lineage* (provenienza, data/ora e payload originario).
-- **Silver Layer (Cleaned & Enriched):** Pulizia del testo e inferenza del Sentiment con modello RoBERTa (`cardiffnlp/twitter-roberta-base-sentiment-latest`). I dati sono protetti da **MongoDB JSON Schema Validation** per garantire integrità e conformità dei campi.
-- **Gold Layer (Aggregated Analytics):** Query di aggregazione MongoDB (`$group`, `$avg`) per calcolare metriche chiave esposte su Dashboard Web interattiva.
+Piattaforma end-to-end di **Social Listening e Sentiment Analysis** per l'industria cinematografica e dei media. Il progetto adotta un approccio rigoroso basato sulla **Data Governance**, con architettura dati a livelli **Medallion (Bronze, Silver, Gold)** e persistenza su **MongoDB**.
 
 ---
 
-## Struttura del Progetto
+## 🏛️ Architettura dei Dati & Governance
+
+```mermaid
+flowchart TD
+    subgraph Sources [Fonti Esterne]
+        YT[YouTube Data API v3<br/>Commenti & Engagement Like]
+        LB[Letterboxd Scraper<br/>Recensioni, Rating & Autore]
+    end
+
+    subgraph Bronze [Bronze Layer - Raw Data & Lineage]
+        R_YT[(raw_youtube<br/>Unique Index: comment_id)]
+        R_LB[(raw_letterboxd<br/>Unique Index: film + author)]
+    end
+
+    subgraph Silver [Silver Layer - Enriched & Validated]
+        NLP[Pipeline NLP & Data Cleaning<br/>• Pulizia regex<br/>• Rilevamento lingua: langdetect<br/>• Aspect Extraction: 5 Topic<br/>• RoBERTa Sentiment Model]
+        S_DATA[(silver_data<br/>MongoDB JSON Schema Validation<br/>Unique Index: source_platform + source_id)]
+    end
+
+    subgraph Gold [Gold Layer - Aggregated Analytics]
+        AGG[MongoDB Aggregations<br/>$group, $avg, $unwind]
+        DASH[Streamlit Dashboard Web<br/>Filtri interattivi, KPI & Feed]
+    end
+
+    YT -->|Upsert Idempotente| R_YT
+    LB -->|Upsert Idempotente| R_LB
+    R_YT -->|Filtro processed: false| NLP
+    R_LB -->|Filtro processed: false| NLP
+    NLP -->|Validazione Schema| S_DATA
+    S_DATA --> AGG --> DASH
+```
+
+### I Pilastri della Data Governance
+1. **Data Lineage:** ogni documento Bronze e Silver contiene il blocco tracciabile `_governance`:
+   - `source_platform`: provenienza (`youtube`, `letterboxd`).
+   - `source_id`: chiave univoca originaria per risalire al dato grezzo.
+   - `extraction_timestamp`: marca temporale UTC ISO standard.
+2. **Qualità del Dato & Schema Validation:** sulla collezione `silver_data` è applicata una **JSON Schema Validation** rigorosa direttamente in MongoDB (`collMod`), impedendo l'inserimento di dati privi di score, testo normalizzato o metadati di audit.
+3. **Idempotenza & Deduplicazione:**
+   - Indici univoci composti impediscono duplicati.
+   - Gli script di ingestione utilizzano logiche di `upsert` (`$set` per aggiornare i campi e `$setOnInsert` per inizializzare `_governance.processed: False`).
+   - Lo script di processing analizza unicamente i documenti non ancora processati (`_governance.processed != True`), azzerando il consumo computazionale superfluo.
+
+---
+
+## 🚀 Funzionalità Principali
+
+- **Ingestione Dati Multi-piattaforma:**
+  - **YouTube API v3:** estrazione commenti ordinati per rilevanza e conteggio like.
+  - **Letterboxd:** crawler BeautifulSoup4 adattato al layout DOM moderno (`article.production-viewing`).
+- **Analisi Sentiment con Deep Learning:**
+  - Modello Transformer RoBERTa (`cardiffnlp/twitter-roberta-base-sentiment-latest`).
+  - Score continuo normalizzato da `-1.0` (massima negatività) a `+1.0` (massima positività) con classificazione categorica (*Positive*, *Neutral*, *Negative*).
+- **Aspect-Based Social Listening:**
+  - Estrazione automatica bilingue (IT/EN) degli argomenti trattati nel commento:
+    - 🎬 **`directing`**: regia, filmmaker, registi (es. Villeneuve, Nolan).
+    - 🎭 **`acting`**: interpretazione, cast, attori (es. Chalamet, Butler).
+    - 🎵 **`soundtrack`**: colonna sonora, musica, audio (es. Hans Zimmer).
+    - 🎨 **`visuals`**: cinematografia, estetica, effetti visivi, CGI.
+    - 📖 **`plot`**: trama, storia, sceneggiatura, ritmo, finale.
+- **Rilevamento Automatico della Lingua:** identificazione ISO (`it`, `en`, `es`, ecc.) con libreria `langdetect`.
+- **Dashboard Interattiva in Streamlit:**
+  - Filtri dinamici in sidebar per piattaforma e per singolo aspetto.
+  - KPI cards: totale contributi, sentiment score medio e argomento più discusso.
+  - Grafici di ripartizione e sentiment medio aggregato per singolo aspetto.
+  - Feed dei commenti analizzati con badge di lingua, score e aspetti rilevati.
+
+---
+
+## 📁 Struttura del Progetto
 
 ```text
-├── config/                  # Configurazioni di ambiente e costanti
+sentiment_analysis_project/
+├── config/                  # Configurazioni e parametri globali
 ├── src/
 │   ├── db/
-│   │   ├── client.py        # Client MongoDB sincrono e asincrono (Motor)
-│   │   └── init_db.py       # Setup schema validation & collezioni
+│   │   ├── client.py        # Client MongoDB sincrono (pymongo) e asincrono (motor)
+│   │   └── init_db.py       # Creazione collezioni, schema validation e indici univoci
 │   ├── ingestion/
-│   │   ├── letterboxd.py    # Crawler/Scraper recensioni Letterboxd
-│   │   └── youtube.py       # Client API YouTube v3 (ordinamento per rilevanza/like)
+│   │   ├── letterboxd.py    # Scraper per Letterboxd con upsert idempotente
+│   │   └── youtube.py       # Client YouTube Data API v3 con ranking per like
 │   ├── processing/
-│   │   └── sentiment.py     # Pulizia testo & pipeline NLP Hugging Face
+│   │   └── sentiment.py     # Pipeline NLP (pulizia, lingua, aspetti, RoBERTa)
 │   └── dashboard/
 │       └── app.py           # Dashboard analitica Streamlit
-├── docker-compose.yml       # Configurazione MongoDB locale & Mongo Express
-├── requirements.txt         # Dipendenze Python
-└── .env.example             # Template variabili d'ambiente
+├── docker-compose.yml       # Setup MongoDB e Mongo Express
+├── requirements.txt         # Dipendenze Python bloccate
+├── .env.example             # Template variabili d'ambiente
+└── README.md                # Documentazione tecnica
 ```
 
 ---
 
-## Setup & Installazione
+## 🛠️ Guida Rapida all'Avvio
 
-### 1. Avvio Database MongoDB (Docker)
-
+### 1. Avviare MongoDB con Docker
 ```bash
 docker run -d --name sentiment_mongodb -p 27017:27017 \
   -e MONGO_INITDB_ROOT_USERNAME=root \
@@ -49,35 +113,37 @@ docker run -d --name sentiment_mongodb -p 27017:27017 \
   --restart unless-stopped mongo:6.0
 ```
 
-### 2. Configurazione Ambiente Python
-
+### 2. Configurare l'Ambiente Virtuale Python
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
+*(Nel file `.env`, inserire la propria `YOUTUBE_API_KEY`).*
 
-### 3. Inizializzazione Schema & Data Governance
-
+### 3. Inizializzare Database, Regole di Governance e Indici
 ```bash
 python src/db/init_db.py
 ```
 
-### 4. Ingestione ed Elaborazione
-
-- **Scraping Letterboxd:**
+### 4. Eseguire l'Ingestione dei Dati (Bronze Layer)
+- **Da YouTube:**
+  ```bash
+  python src/ingestion/youtube.py
+  ```
+- **Da Letterboxd:**
   ```bash
   python src/ingestion/letterboxd.py
   ```
-- **Elaborazione Sentiment Analysis:**
-  ```bash
-  python src/processing/sentiment.py
-  ```
 
-### 5. Avvio Dashboard Streamlit
+### 5. Elaborare i Dati con la Pipeline NLP (Silver Layer)
+```bash
+python src/processing/sentiment.py
+```
 
+### 6. Lanciare la Dashboard Analitica (Gold Layer)
 ```bash
 streamlit run src/dashboard/app.py
 ```
-
+La dashboard sarà raggiungibile all'indirizzo `http://localhost:8501`.
