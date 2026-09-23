@@ -80,3 +80,4 @@ python src/db/init_db.py
 ```bash
 streamlit run src/dashboard/app.py
 ```
+

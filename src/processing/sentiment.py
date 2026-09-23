@@ -1,9 +1,13 @@
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from transformers import pipeline
 import sys
 from dotenv import load_dotenv
+from langdetect import detect, DetectorFactory
+
+# Fissa il seed per riproducibilità nel rilevamento della lingua
+DetectorFactory.seed = 0
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from src.db.client import get_sync_db
@@ -20,32 +24,59 @@ except Exception as e:
     print(f"Errore nel caricamento del modello: {e}")
     sentiment_pipeline = None
 
+# Vocabolario bilingue (IT/EN) per Aspect-Based Sentiment & Social Listening
+ASPECT_KEYWORDS = {
+    "directing": ["direct", "director", "regia", "regista", "direction", "filmmaker", "villeneuve", "nolan"],
+    "acting": ["act", "acting", "actor", "actress", "recitazione", "attore", "attrice", "cast", "performance", "chalamet", "zendaya", "butler"],
+    "soundtrack": ["music", "soundtrack", "score", "colonna sonora", "musica", "audio", "sound", "zimmer"],
+    "visuals": ["visual", "visuals", "cinematography", "cgi", "effects", "fotografia", "effetti", "estetica", "shot", "scenografia"],
+    "plot": ["plot", "story", "trama", "sceneggiatura", "script", "ending", "finale", "pacing", "ritmo", "storia"]
+}
+
 def clean_text(text):
     """
     Pulisce il testo (rimuove URL, tag HTML, spazi multipli).
     """
     if not isinstance(text, str):
         return ""
-    # Rimuovi URL
     text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
-    # Rimuovi tag HTML
     text = re.sub(r'<.*?>', '', text)
-    # Rimuovi caratteri speciali mantenendo punteggiatura base
     text = re.sub(r'[^\w\s.,!?\'"-]', '', text)
-    # Spazi multipli
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+def detect_language(text):
+    """
+    Rileva automaticamente la lingua del commento (es. 'it', 'en', 'es').
+    """
+    if not text or len(text.strip()) < 4:
+        return "unknown"
+    try:
+        return detect(text)
+    except Exception:
+        return "unknown"
+
+def extract_aspects(text):
+    """
+    Estrae le categorie tematiche (aspects) menzionate nel commento/recensione.
+    """
+    text_lower = text.lower()
+    detected_aspects = []
+    
+    for aspect, keywords in ASPECT_KEYWORDS.items():
+        pattern = r'\b(' + '|'.join(re.escape(k) for k in keywords) + r')\b'
+        if re.search(pattern, text_lower):
+            detected_aspects.append(aspect)
+            
+    return detected_aspects
+
 def analyze_sentiment(text):
     """
-    Analizza il sentiment e mappa l'output di RoBERTa al formato richiesto dal DB.
-    RoBERTa output: LABEL_0 (negative), LABEL_1 (neutral), LABEL_2 (positive)
-    o 'negative', 'neutral', 'positive' a seconda del modello.
+    Analizza il sentiment e mappa l'output normalizzato tra -1.0 e 1.0.
     """
     if not sentiment_pipeline or not text:
         return 0.0, "Neutral"
 
-    # Trunca per limiti del modello (max 512 token)
     truncated_text = " ".join(text.split()[:100])
     
     try:
@@ -53,7 +84,6 @@ def analyze_sentiment(text):
         label = result['label'].lower()
         score = result['score']
 
-        # Normalizza score tra -1.0 e 1.0
         if "negative" in label or label == "label_0":
             mapped_label = "Negative"
             final_score = -score
@@ -69,44 +99,96 @@ def analyze_sentiment(text):
         print(f"Errore durante l'analisi: {e}")
         return 0.0, "Neutral"
 
-def process_unprocessed_data():
+def process_source_collection(db, collection_name, platform_name, id_extractor, batch_size=50):
     """
-    Legge dati grezzi non processati, li pulisce,
-    applica sentiment analysis e li salva in silver_data rispettando lo schema.
+    Elabora i documenti non ancora processati da una collection Bronze specifica.
+    Garantisce idempotenza, arricchimento (lingua, aspetti, sentiment) e data lineage.
     """
-    db = get_sync_db()
-    raw_col = db["raw_letterboxd"]
+    raw_col = db[collection_name]
     silver_col = db["silver_data"]
 
-    # Idealmente qui c'è una logica per prendere solo i documenti non ancora processati
-    # Per semplicità, prendiamo gli ultimi 10
-    cursor = raw_col.find().limit(10)
-    
-    silver_docs = []
+    # Seleziona solo documenti ancora non processati
+    cursor = raw_col.find({"_governance.processed": {"$ne": True}}).limit(batch_size)
+    processed_count = 0
+
     for doc in cursor:
         original_text = doc.get("text", "")
         cleaned = clean_text(original_text)
         
+        # 1. Rilevamento lingua
+        lang = detect_language(cleaned)
+        
+        # 2. Estrazione aspetti tematici
+        aspects = extract_aspects(cleaned)
+        
+        # 3. Sentiment Analysis
         score, label = analyze_sentiment(cleaned)
+        
+        source_id = id_extractor(doc)
         
         silver_doc = {
             "original_text": original_text,
             "cleaned_text": cleaned,
             "sentiment_score": score,
             "sentiment_label": label,
+            "language": lang,
+            "aspects": aspects,
             "_governance": {
-                "source_platform": doc.get("_governance", {}).get("source_platform", "unknown"),
-                "extraction_timestamp": datetime.utcnow().isoformat()
+                "source_platform": platform_name,
+                "extraction_timestamp": datetime.now(timezone.utc).isoformat(),
+                "source_id": str(source_id)
             }
         }
-        silver_docs.append(silver_doc)
+        
+        # Upsert idempotente in Silver (garantito da indice univoco source_platform + source_id)
+        silver_col.update_one(
+            {
+                "_governance.source_platform": platform_name,
+                "_governance.source_id": str(source_id)
+            },
+            {"$set": silver_doc},
+            upsert=True
+        )
 
-    if silver_docs:
-        result = silver_col.insert_many(silver_docs)
-        print(f"Processati e salvati in Silver: {len(result.inserted_ids)} documenti.")
-    else:
-        print("Nessun documento da processare.")
+        # Marca il documento Bronze come processato con timestamp di audit
+        raw_col.update_one(
+            {"_id": doc["_id"]},
+            {
+                "$set": {
+                    "_governance.processed": True,
+                    "_governance.processed_at": datetime.now(timezone.utc).isoformat()
+                }
+            }
+        )
+        processed_count += 1
+
+    return processed_count
+
+def process_unprocessed_data():
+    """
+    Coordina il processamento di tutte le fonti Bronze (YouTube e Letterboxd).
+    """
+    db = get_sync_db()
+
+    # YouTube: comment_id univoco
+    yt_count = process_source_collection(
+        db,
+        collection_name="raw_youtube",
+        platform_name="youtube",
+        id_extractor=lambda doc: doc.get("comment_id", str(doc.get("_id"))),
+        batch_size=100
+    )
+    print(f"Elaborati da YouTube -> Silver: {yt_count} documenti.")
+
+    # Letterboxd: film + author univoco
+    lb_count = process_source_collection(
+        db,
+        collection_name="raw_letterboxd",
+        platform_name="letterboxd",
+        id_extractor=lambda doc: f"{doc.get('film', 'film')}#{doc.get('author', 'unknown')}",
+        batch_size=100
+    )
+    print(f"Elaborati da Letterboxd -> Silver: {lb_count} documenti.")
 
 if __name__ == "__main__":
     process_unprocessed_data()
-

@@ -66,10 +66,36 @@ def save_to_bronze(comments):
     db = get_sync_db()
     collection = db["raw_youtube"]
     
-    # Per evitare duplicati (se si lancia lo script più volte)
-    # in una pipeline reale useremmo update_one con upsert
-    result = collection.insert_many(comments)
-    print(f"Salvati {len(result.inserted_ids)} documenti in raw_youtube.")
+    # Inserimento idempotente con upsert: non crea duplicati e preserva lo stato di elaborazione se già processato
+    upserted_count = 0
+    modified_count = 0
+    for comment in comments:
+        # Separa _governance.processed per impostarlo solo in insert se non esiste
+        res = collection.update_one(
+            {"comment_id": comment["comment_id"]},
+            {
+                "$set": {
+                    "video_id": comment["video_id"],
+                    "author": comment["author"],
+                    "text": comment["text"],
+                    "like_count": comment["like_count"],
+                    "published_at": comment["publishedAt" if "publishedAt" in comment else "published_at"],
+                    "_governance.source_platform": "youtube",
+                    "_governance.extraction_timestamp": comment["_governance"]["extraction_timestamp"],
+                    "_governance.api_version": comment["_governance"]["api_version"]
+                },
+                "$setOnInsert": {
+                    "_governance.processed": False
+                }
+            },
+            upsert=True
+        )
+        if res.upserted_id:
+            upserted_count += 1
+        elif res.modified_count:
+            modified_count += 1
+            
+    print(f"Salvati in raw_youtube: {upserted_count} nuovi, {modified_count} aggiornati su {len(comments)} commenti.")
 
 if __name__ == "__main__":
     # Esempio: Trailer di un film o video di recensione

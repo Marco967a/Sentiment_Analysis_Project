@@ -70,8 +70,34 @@ def save_to_bronze(reviews):
         
     db = get_sync_db()
     collection = db["raw_letterboxd"]
-    result = collection.insert_many(reviews)
-    print(f"Salvati {len(result.inserted_ids)} documenti in raw_letterboxd.")
+    
+    upserted_count = 0
+    modified_count = 0
+    for review in reviews:
+        res = collection.update_one(
+            {"film": review["film"], "author": review["author"]},
+            {
+                "$set": {
+                    "film": review["film"],
+                    "author": review["author"],
+                    "rating": review["rating"],
+                    "text": review["text"],
+                    "_governance.source_platform": "letterboxd",
+                    "_governance.extraction_timestamp": review["_governance"]["extraction_timestamp"],
+                    "_governance.raw_url": review["_governance"]["raw_url"]
+                },
+                "$setOnInsert": {
+                    "_governance.processed": False
+                }
+            },
+            upsert=True
+        )
+        if res.upserted_id:
+            upserted_count += 1
+        elif res.modified_count:
+            modified_count += 1
+            
+    print(f"Salvati in raw_letterboxd: {upserted_count} nuovi, {modified_count} aggiornati su {len(reviews)} recensioni.")
 
 if __name__ == "__main__":
     film = "dune-part-two"
