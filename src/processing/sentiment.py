@@ -27,9 +27,9 @@ except Exception as e:
 # Vocabolario bilingue (IT/EN) per Aspect-Based Sentiment & Social Listening
 ASPECT_KEYWORDS = {
     "directing": ["direct", "director", "regia", "regista", "direction", "filmmaker", "villeneuve", "nolan"],
-    "acting": ["act", "acting", "actor", "actress", "recitazione", "attore", "attrice", "cast", "performance", "chalamet", "zendaya", "butler"],
+    "acting": ["act", "acting", "actor", "actress", "recitazione", "attore", "attrice", "cast", "performance", "chalamet", "zendaya", "butler", "cage", "nicolas cage", "gleeson", "brendan gleeson"],
     "soundtrack": ["music", "soundtrack", "score", "colonna sonora", "musica", "audio", "sound", "zimmer"],
-    "visuals": ["visual", "visuals", "cinematography", "cgi", "effects", "fotografia", "effetti", "estetica", "shot", "scenografia"],
+    "visuals": ["visual", "visuals", "cinematography", "cgi", "effects", "fotografia", "effetti", "estetica", "shot", "scenografia", "noir", "black and white", "bianco e nero", "color", "colori"],
     "plot": ["plot", "story", "trama", "sceneggiatura", "script", "ending", "finale", "pacing", "ritmo", "storia"]
 }
 
@@ -164,31 +164,44 @@ def process_source_collection(db, collection_name, platform_name, id_extractor, 
 
     return processed_count
 
-def process_unprocessed_data():
+def process_unprocessed_data(batch_size=100):
     """
     Coordina il processamento di tutte le fonti Bronze (YouTube e Letterboxd).
+    Continua a ciclare a batch finché tutti i record non processati vengono elaborati.
     """
     db = get_sync_db()
 
     # YouTube: comment_id univoco
-    yt_count = process_source_collection(
-        db,
-        collection_name="raw_youtube",
-        platform_name="youtube",
-        id_extractor=lambda doc: doc.get("comment_id", str(doc.get("_id"))),
-        batch_size=100
-    )
-    print(f"Elaborati da YouTube -> Silver: {yt_count} documenti.")
+    total_yt = 0
+    while True:
+        yt_count = process_source_collection(
+            db,
+            collection_name="raw_youtube",
+            platform_name="youtube",
+            id_extractor=lambda doc: doc.get("comment_id", str(doc.get("_id"))),
+            batch_size=batch_size
+        )
+        total_yt += yt_count
+        if yt_count == 0:
+            break
+        print(f"Batch elaborato da YouTube -> Silver: {yt_count} documenti (totale finora: {total_yt}).")
+    print(f"✅ Totale completato YouTube -> Silver: {total_yt} documenti.")
 
     # Letterboxd: film + author univoco
-    lb_count = process_source_collection(
-        db,
-        collection_name="raw_letterboxd",
-        platform_name="letterboxd",
-        id_extractor=lambda doc: f"{doc.get('film', 'film')}#{doc.get('author', 'unknown')}",
-        batch_size=100
-    )
-    print(f"Elaborati da Letterboxd -> Silver: {lb_count} documenti.")
+    total_lb = 0
+    while True:
+        lb_count = process_source_collection(
+            db,
+            collection_name="raw_letterboxd",
+            platform_name="letterboxd",
+            id_extractor=lambda doc: f"{doc.get('film', 'film')}#{doc.get('author', 'unknown')}",
+            batch_size=batch_size
+        )
+        total_lb += lb_count
+        if lb_count == 0:
+            break
+        print(f"Batch elaborato da Letterboxd -> Silver: {lb_count} documenti (totale finora: {total_lb}).")
+    print(f"✅ Totale completato Letterboxd -> Silver: {total_lb} documenti.")
 
 if __name__ == "__main__":
     process_unprocessed_data()

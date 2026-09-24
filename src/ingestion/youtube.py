@@ -11,50 +11,59 @@ load_dotenv()
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-def get_youtube_comments(video_id, max_results=100):
+def get_youtube_comments(video_id, max_results=100, video_title=None):
     """
     Recupera i commenti da un video YouTube ordinandoli per rilevanza (spesso correlato ai like).
+    Supporta paginazione per recuperare oltre 100 commenti.
     """
     if not YOUTUBE_API_KEY or YOUTUBE_API_KEY == "your_youtube_api_key_here":
         print("ATTENZIONE: YOUTUBE_API_KEY non configurata in .env")
         return []
 
     youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-
     comments_data = []
-    
-    try:
-        request = youtube.commentThreads().list(
-            part="snippet",
-            videoId=video_id,
-            maxResults=max_results,
-            order="relevance" # Ordina per i commenti più rilevanti/apprezzati
-        )
-        response = request.execute()
+    next_page_token = None
 
-        for item in response.get("items", []):
-            comment = item["snippet"]["topLevelComment"]["snippet"]
-            
-            # Filtro opzionale: salva solo se ha almeno 1 like (da configurare a seconda delle esigenze)
-            like_count = comment.get("likeCount", 0)
-            
-            comment_doc = {
-                "video_id": video_id,
-                "comment_id": item["id"],
-                "author": comment.get("authorDisplayName", "Unknown"),
-                "text": comment.get("textDisplay"),
-                "like_count": like_count,
-                "published_at": comment.get("publishedAt"),
-                "_governance": {
-                    "source_platform": "youtube",
-                    "extraction_timestamp": datetime.now(timezone.utc).isoformat(),
-                    "api_version": "v3"
+    try:
+        while len(comments_data) < max_results:
+            page_size = min(100, max_results - len(comments_data))
+            request = youtube.commentThreads().list(
+                part="snippet",
+                videoId=video_id,
+                maxResults=page_size,
+                order="relevance",
+                pageToken=next_page_token
+            )
+            response = request.execute()
+
+            for item in response.get("items", []):
+                comment = item["snippet"]["topLevelComment"]["snippet"]
+                like_count = comment.get("likeCount", 0)
+                
+                comment_doc = {
+                    "video_id": video_id,
+                    "video_title": video_title,
+                    "comment_id": item["id"],
+                    "author": comment.get("authorDisplayName", "Unknown"),
+                    "text": comment.get("textDisplay"),
+                    "like_count": like_count,
+                    "published_at": comment.get("publishedAt"),
+                    "_governance": {
+                        "source_platform": "youtube",
+                        "extraction_timestamp": datetime.now(timezone.utc).isoformat(),
+                        "api_version": "v3"
+                    }
                 }
-            }
-            comments_data.append(comment_doc)
+                comments_data.append(comment_doc)
+                if len(comments_data) >= max_results:
+                    break
+
+            next_page_token = response.get("nextPageToken")
+            if not next_page_token:
+                break
 
     except Exception as e:
-        print(f"Errore durante l'API call a YouTube: {e}")
+        print(f"Errore durante l'API call a YouTube per il video {video_id}: {e}")
 
     return comments_data
 
@@ -70,20 +79,23 @@ def save_to_bronze(comments):
     upserted_count = 0
     modified_count = 0
     for comment in comments:
-        # Separa _governance.processed per impostarlo solo in insert se non esiste
+        set_payload = {
+            "video_id": comment["video_id"],
+            "author": comment["author"],
+            "text": comment["text"],
+            "like_count": comment["like_count"],
+            "published_at": comment.get("published_at") or comment.get("publishedAt"),
+            "_governance.source_platform": "youtube",
+            "_governance.extraction_timestamp": comment["_governance"]["extraction_timestamp"],
+            "_governance.api_version": comment["_governance"]["api_version"]
+        }
+        if comment.get("video_title"):
+            set_payload["video_title"] = comment["video_title"]
+
         res = collection.update_one(
             {"comment_id": comment["comment_id"]},
             {
-                "$set": {
-                    "video_id": comment["video_id"],
-                    "author": comment["author"],
-                    "text": comment["text"],
-                    "like_count": comment["like_count"],
-                    "published_at": comment["publishedAt" if "publishedAt" in comment else "published_at"],
-                    "_governance.source_platform": "youtube",
-                    "_governance.extraction_timestamp": comment["_governance"]["extraction_timestamp"],
-                    "_governance.api_version": comment["_governance"]["api_version"]
-                },
+                "$set": set_payload,
                 "$setOnInsert": {
                     "_governance.processed": False
                 }
@@ -98,10 +110,33 @@ def save_to_bronze(comments):
     print(f"Salvati in raw_youtube: {upserted_count} nuovi, {modified_count} aggiornati su {len(comments)} commenti.")
 
 if __name__ == "__main__":
-    # Esempio: Trailer di un film o video di recensione
-    test_video_id = "U2Qp5pL3ovA" # Esempio (Dune 2 Trailer)
-    print(f"Recupero commenti per il video: {test_video_id}...")
-    scraped_data = get_youtube_comments(test_video_id, max_results=50)
-    print(f"Trovati {len(scraped_data)} commenti.")
-    save_to_bronze(scraped_data)
+    # Trailer ufficiali di Spider-Noir (sia Bianco e Nero che a Colori)
+    spider_noir_trailers = [
+        {
+            "id": "DfowFyDxUXo",
+            "title": "Spider-Noir - Authentic Black & White Trailer | Prime Video"
+        },
+        {
+            "id": "u48_JpUloGY",
+            "title": "Spider-Noir - Official Trailer True-Hue Full Color | Sony Pictures Television"
+        },
+        {
+            "id": "e5QW457407U",
+            "title": "Spider-Noir - True-Hue Full Color Final Trailer | Prime Video"
+        },
+        {
+            "id": "9aB0Qc9rAbM",
+            "title": "Spider-Noir - Trailer Ufficiale Italiano | Prime Video Italia"
+        }
+    ]
+
+    total_comments = 0
+    for trailer in spider_noir_trailers:
+        print(f"\n🎬 Recupero commenti per: '{trailer['title']}' (ID: {trailer['id']})...")
+        scraped_data = get_youtube_comments(trailer["id"], max_results=100, video_title=trailer["title"])
+        print(f"Trovati {len(scraped_data)} commenti.")
+        save_to_bronze(scraped_data)
+        total_comments += len(scraped_data)
+
+    print(f"\n🎉 Ingestione completata! Totale commenti estratti ed elaborati nel Bronze layer: {total_comments}")
 
