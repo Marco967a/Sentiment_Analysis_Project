@@ -21,6 +21,7 @@ pydantic==2.6.4
 # Dashboard
 streamlit==1.32.0
 
-# Utils
+# Utils & Documentation
 python-dotenv==1.0.1
+reportlab==5.0.1
 

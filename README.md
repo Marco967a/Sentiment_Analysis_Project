@@ -83,6 +83,10 @@ flowchart TD
 ```text
 sentiment_analysis_project/
 ├── config/                  # Configurazioni e parametri globali
+├── docs/                    # Documentazione e Manuale Utente PDF
+│   └── Manuale_Utente_Sentiment_Hub.pdf
+├── scripts/                 # Script di utilità (es. generazione manuale PDF)
+│   └── generate_manual_pdf.py
 ├── src/
 │   ├── db/
 │   │   ├── client.py        # Client MongoDB sincrono (pymongo) e asincrono (motor)
