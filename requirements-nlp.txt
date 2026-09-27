@@ -1,0 +1,4 @@
+# Machine Learning & NLP Pipeline (Local / GPU / Offline Processing)
+# Usato da src/processing/sentiment.py per calcolare il sentiment RoBERTa
+transformers>=4.38.0
+torch>=2.2.0

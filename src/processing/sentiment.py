@@ -1,7 +1,10 @@
 import os
 import re
 from datetime import datetime, timezone
-from transformers import pipeline
+try:
+    from transformers import pipeline
+except ImportError:
+    pipeline = None
 import sys
 from dotenv import load_dotenv
 from langdetect import detect, DetectorFactory
@@ -16,12 +19,16 @@ load_dotenv()
 
 MODEL_NAME = os.getenv("TRANSFORMERS_MODEL", "cardiffnlp/twitter-roberta-base-sentiment-latest")
 
-print(f"Caricamento del modello NLP: {MODEL_NAME}...")
-try:
-    sentiment_pipeline = pipeline("sentiment-analysis", model=MODEL_NAME, tokenizer=MODEL_NAME)
-    print("Modello caricato con successo.")
-except Exception as e:
-    print(f"Errore nel caricamento del modello: {e}")
+if pipeline is not None:
+    print(f"Caricamento del modello NLP: {MODEL_NAME}...")
+    try:
+        sentiment_pipeline = pipeline("sentiment-analysis", model=MODEL_NAME, tokenizer=MODEL_NAME)
+        print("Modello caricato con successo.")
+    except Exception as e:
+        print(f"Errore nel caricamento del modello: {e}")
+        sentiment_pipeline = None
+else:
+    print("ATTENZIONE: 'transformers' o 'torch' non risultano installati. Installa 'requirements-nlp.txt' per eseguire la pipeline NLP.")
     sentiment_pipeline = None
 
 # Vocabolario bilingue (IT/EN) per Aspect-Based Sentiment & Social Listening

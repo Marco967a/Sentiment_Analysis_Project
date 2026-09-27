@@ -1,27 +1,12 @@
-# Database
-pymongo==4.6.2
-motor==3.3.2
+# Core & Streamlit Dashboard (Streamlit Cloud & Production)
+streamlit>=1.32.0
+pandas>=2.2.0
+pymongo>=4.6.0
+motor>=3.3.0
+python-dotenv>=1.0.0
 
 # Data Ingestion
-requests==2.31.0
-beautifulsoup4==4.12.3
-google-api-python-client==2.121.0
-
-# NLP & Data Processing
-transformers==4.38.2
-torch==2.2.1
-pandas==2.2.1
-langdetect==1.0.9
-
-# API & Backend
-fastapi==0.110.0
-uvicorn==0.28.0
-pydantic==2.6.4
-
-# Dashboard
-streamlit==1.32.0
-
-# Utils & Documentation
-python-dotenv==1.0.1
-reportlab==5.0.1
-
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+google-api-python-client>=2.120.0
+langdetect>=1.0.9

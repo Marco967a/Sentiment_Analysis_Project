@@ -1,0 +1,6 @@
+# Full local development requirements
+-r requirements.txt
+-r requirements-nlp.txt
+
+# Report & PDF Documentation Generator (scripts/generate_manual_pdf.py)
+reportlab>=4.0.0

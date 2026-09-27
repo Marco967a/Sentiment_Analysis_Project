@@ -82,6 +82,8 @@ flowchart TD
 
 ```text
 sentiment_analysis_project/
+├── .streamlit/              # Configurazione tema e server per Streamlit Cloud
+│   └── config.toml
 ├── config/                  # Configurazioni e parametri globali
 ├── docs/                    # Documentazione e Manuale Utente PDF
 │   └── Manuale_Utente_Sentiment_Hub.pdf
@@ -101,7 +103,9 @@ sentiment_analysis_project/
 ├── Dockerfile               # Build dell'immagine Streamlit
 ├── .dockerignore            # Ottimizzazione del contesto Docker
 ├── docker-compose.yml       # Stack completo: MongoDB, Mongo Express, Dashboard
-├── requirements.txt         # Dipendenze Python bloccate
+├── requirements.txt         # Dipendenze core per Streamlit Cloud e Ingestion
+├── requirements-nlp.txt     # Dipendenze Deep Learning NLP (Transformers, PyTorch)
+├── requirements-dev.txt     # Dipendenze complete sviluppo locale & PDF ReportLab
 ├── .env.example             # Template variabili d'ambiente
 └── README.md                # Documentazione tecnica
 ```
@@ -135,8 +139,14 @@ docker run -d --name sentiment_mongodb -p 27017:27017 \
 #### 2. Configurare l'Ambiente Python
 ```bash
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # Su Windows: venv\Scripts\activate
+
+# Per eseguire la Dashboard Streamlit e l'Ingestione:
 pip install -r requirements.txt
+
+# Per eseguire anche la pipeline NLP con modello RoBERTa (PyTorch):
+pip install -r requirements-nlp.txt
+
 cp .env.example .env
 ```
 *(Inserire la propria `YOUTUBE_API_KEY` nel file `.env`).*
@@ -157,6 +167,7 @@ python src/db/init_db.py
   ```
 
 #### 5. Elaborare i Dati con la Pipeline NLP (Silver Layer)
+*(Richiede `pip install -r requirements-nlp.txt`)*
 ```bash
 python src/processing/sentiment.py
 ```
@@ -166,3 +177,18 @@ python src/processing/sentiment.py
 streamlit run src/dashboard/app.py
 ```
 La dashboard sarà raggiungibile all'indirizzo `http://localhost:8501`.
+
+---
+
+### ☁️ Deploy su Streamlit Community Cloud
+
+Per pubblicare la dashboard su **Streamlit Cloud** (`share.streamlit.io`):
+1. **Repository:** Seleziona il tuo repository GitHub (`Marco967a/Sentiment_Analysis_Project`).
+2. **Branch:** `main`
+3. **Main file path:** `src/dashboard/app.py`
+4. **Secrets:** In **App settings -> Secrets**, inserisci la stringa di connessione del tuo database (es. MongoDB Atlas gratuito):
+   ```toml
+   MONGODB_URI = "mongodb+srv://<db_user>:<db_password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
+   MONGODB_DB_NAME = "sentiment_db"
+   ```
+5. Clicca su **Deploy!**: Streamlit installerà automaticamente `requirements.txt` (leggero e compatibile, senza blocchi di memoria o dipendenze C) e avvierà il servizio in pochi secondi.

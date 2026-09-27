@@ -61,8 +61,18 @@ def get_filtered_documents(db, filter_query=None, limit=25):
 def main():
     try:
         db = get_sync_db()
+        db.command("ping")
     except Exception as e:
-        st.error(f"Errore di connessione a MongoDB: {e}")
+        st.error(f"❌ Impossibile connettersi a MongoDB: {e}")
+        st.warning(
+            "Se stai eseguendo l'app su **Streamlit Cloud**, assicurati di configurare l'URI del database "
+            "(ad esempio un cluster MongoDB Atlas) nella sezione **App settings -> Secrets**:\n\n"
+            "```toml\n"
+            "MONGODB_URI = \"mongodb+srv://<username>:<password>@cluster.mongodb.net/\"\n"
+            "MONGODB_DB_NAME = \"sentiment_db\"\n"
+            "```\n\n"
+            "Se invece sei in locale, assicurati che il container MongoDB sia attivo (`docker compose up -d mongodb`)."
+        )
         return
 
     # Barra laterale dei filtri
