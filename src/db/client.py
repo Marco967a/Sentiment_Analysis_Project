@@ -1,6 +1,6 @@
 import os
-from typing import Optional
-from motor.motor_asyncio import AsyncIOMotorClient
+from typing import Optional, Any
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import MongoClient
 from pymongo.database import Database
 from dotenv import load_dotenv
@@ -40,7 +40,7 @@ def get_sync_db(timeout_ms: int = 5000) -> Database:
 
 class AsyncDatabase:
     client: Optional[AsyncIOMotorClient] = None
-    db: Optional[Database] = None
+    db: Optional[AsyncIOMotorDatabase] = None
 
     @classmethod
     def connect(cls, timeout_ms: int = 5000):
@@ -61,7 +61,7 @@ class AsyncDatabase:
             cls.db = None
             print("MongoDB connection closed.")
 
-async def get_async_db():
+async def get_async_db() -> Optional[AsyncIOMotorDatabase]:
     """Restituisce il client DB asincrono."""
     if AsyncDatabase.db is None:
         AsyncDatabase.connect()
