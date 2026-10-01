@@ -415,7 +415,9 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     ))
     story.append(Paragraph("<b>File di Configurazione Ambiente (<code>.env</code>):</b>", styles['DocBody']))
     env_code = [
-        "MONGODB_URI=mongodb://root:example_password@localhost:27017/",
+        "MONGO_ROOT_PASSWORD=CAMBIA_QUESTA_PASSWORD",
+        "MONGO_EXPRESS_PASSWORD=CAMBIA_QUESTA_PASSWORD",
+        "MONGODB_URI=mongodb://root:CAMBIA_QUESTA_PASSWORD@localhost:27017/",
         "MONGODB_DB_NAME=sentiment_db",
         "YOUTUBE_API_KEY=AIzaSyBcsZVJ0ZVJqq-ESEMPIO_API_KEY",
         "TRANSFORMERS_MODEL=cardiffnlp/twitter-roberta-base-sentiment-latest"
@@ -439,7 +441,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         "Prima di effettuare qualunque ingestione o analisi, è necessario inizializzare il database eseguendo:",
         styles['DocBody']
     ))
-    story.append(make_code_box(["python src/db/init_db.py"]))
+    story.append(make_code_box(["python -m src.db.init_db"]))
 
     story.append(Spacer(1, 4))
     story.append(Paragraph("Operazioni Eseguite da `init_db.py`", styles['DocH2']))
@@ -486,7 +488,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     story.append(Paragraph("<b>Esempio di Esecuzione e Codice Python:</b>", styles['DocBody']))
     story.append(make_code_box([
         "# Esecuzione da terminale",
-        "python src/ingestion/youtube.py",
+        "python -m src.ingestion.youtube",
         "",
         "# Utilizzo come modulo per qualsiasi film/video:",
         "from src.ingestion.youtube import get_youtube_comments, save_to_bronze",
@@ -510,7 +512,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     story.append(Paragraph("<b>Esempio di Esecuzione e Codice Python:</b>", styles['DocBody']))
     story.append(make_code_box([
         "# Esecuzione da terminale",
-        "python src/ingestion/letterboxd.py",
+        "python -m src.ingestion.letterboxd",
         "",
         "# Utilizzo come modulo per qualsiasi film (slug URL):",
         "from src.ingestion.letterboxd import scrape_letterboxd_reviews, save_to_bronze",
@@ -539,7 +541,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         "e li salva con upsert nella collezione <code>silver_data</code>:",
         styles['DocBody']
     ))
-    story.append(make_code_box(["python src/processing/sentiment.py"]))
+    story.append(make_code_box(["python -m src.processing.sentiment"]))
 
     story.append(Spacer(1, 4))
     story.append(Paragraph("I Quattro Stadi della Pipeline NLP", styles['DocH2']))

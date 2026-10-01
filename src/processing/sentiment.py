@@ -1,61 +1,81 @@
+import argparse
+import html
+import logging
 import os
 import re
 from datetime import datetime, timezone
-try:
-    from transformers import pipeline
-except ImportError:
-    pipeline = None
-import sys
+from functools import lru_cache
+from pathlib import Path
+from typing import Callable, Optional
+
+import yaml
 from dotenv import load_dotenv
-from langdetect import detect, DetectorFactory
+from langdetect import DetectorFactory, detect
+
+from src.db.client import get_sync_db
+from src.logging_config import setup_logging
 
 # Fissa il seed per riproducibilità nel rilevamento della lingua
 DetectorFactory.seed = 0
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from src.db.client import get_sync_db
-
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 MODEL_NAME = os.getenv("TRANSFORMERS_MODEL", "cardiffnlp/twitter-roberta-base-sentiment-latest")
+ASPECTS_CONFIG = Path(os.getenv("ASPECTS_CONFIG", Path(__file__).resolve().parents[2] / "config" / "aspects.yaml"))
 
-if pipeline is not None:
-    print(f"Caricamento del modello NLP: {MODEL_NAME}...")
+# Versione della logica di pulizia/estrazione: incrementarla quando clean_text o aspects.yaml cambiano,
+# poi usare --reprocess-outdated per riallineare i record Silver esistenti.
+CLEANING_VERSION = 2
+MAX_ATTEMPTS = 3  # dopo N fallimenti un documento Bronze non viene più ritentato (vedi --retry-failed)
+
+
+@lru_cache(maxsize=1)
+def get_sentiment_pipeline():
+    """Carica il modello NLP alla prima richiesta (nessun effetto collaterale all'import). None se non disponibile."""
     try:
-        sentiment_pipeline = pipeline("sentiment-analysis", model=MODEL_NAME, tokenizer=MODEL_NAME)
-        print("Modello caricato con successo.")
-    except Exception as e:
-        print(f"Errore nel caricamento del modello: {e}")
-        sentiment_pipeline = None
-else:
-    print("ATTENZIONE: 'transformers' o 'torch' non risultano installati. Installa 'requirements-nlp.txt' per eseguire la pipeline NLP.")
-    sentiment_pipeline = None
+        from transformers import pipeline
+    except ImportError:
+        logger.error("'transformers'/'torch' non installati: installa requirements-nlp.txt.")
+        return None
+    logger.info("Caricamento del modello NLP: %s...", MODEL_NAME)
+    try:
+        model = pipeline("sentiment-analysis", model=MODEL_NAME, tokenizer=MODEL_NAME)
+    except Exception:
+        logger.exception("Errore nel caricamento del modello %s.", MODEL_NAME)
+        return None
+    logger.info("Modello caricato con successo.")
+    return model
 
-# Vocabolario bilingue (IT/EN) per Aspect-Based Sentiment & Social Listening
-ASPECT_KEYWORDS = {
-    "directing": ["direct", "director", "regia", "regista", "direction", "filmmaker", "villeneuve", "nolan"],
-    "acting": ["act", "acting", "actor", "actress", "recitazione", "attore", "attrice", "cast", "performance", "chalamet", "zendaya", "butler", "cage", "nicolas cage", "gleeson", "brendan gleeson"],
-    "soundtrack": ["music", "soundtrack", "score", "colonna sonora", "musica", "audio", "sound", "zimmer"],
-    "visuals": ["visual", "visuals", "cinematography", "cgi", "effects", "fotografia", "effetti", "estetica", "shot", "scenografia", "noir", "black and white", "bianco e nero", "color", "colori"],
-    "plot": ["plot", "story", "trama", "sceneggiatura", "script", "ending", "finale", "pacing", "ritmo", "storia"]
-}
 
-def clean_text(text):
+@lru_cache(maxsize=1)
+def _aspect_patterns() -> dict[str, re.Pattern]:
+    with open(ASPECTS_CONFIG, encoding="utf-8") as f:
+        vocabulary = yaml.safe_load(f)
+    return {
+        aspect: re.compile(r"\b(" + "|".join(re.escape(k.lower()) for k in keywords) + r")\b")
+        for aspect, keywords in vocabulary.items()
+    }
+
+
+def clean_text(text) -> str:
     """
-    Pulisce il testo (rimuove URL, tag HTML, spazi multipli).
+    Pulisce il testo (rimuove tag HTML, URL, spazi multipli).
+    I tag vanno rimossi prima degli URL: altrimenti la regex degli URL consuma il `>` di
+    `<a href="...">` e la regex dei tag cancella testo reale fino al `>` successivo.
     """
     if not isinstance(text, str):
         return ""
-    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'<.*?>', '', text)
+    text = re.sub(r'<[^>]*>', ' ', text)
+    text = html.unescape(text)
+    text = re.sub(r'https?://\S+|www\.\S+', '', text)
     text = re.sub(r'[^\w\s.,!?\'"-]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    return re.sub(r'\s+', ' ', text).strip()
 
-def detect_language(text):
-    """
-    Rileva automaticamente la lingua del commento (es. 'it', 'en', 'es').
-    """
+
+def detect_language(text: str) -> str:
+    """Rileva automaticamente la lingua del commento (es. 'it', 'en', 'es')."""
     if not text or len(text.strip()) < 4:
         return "unknown"
     try:
@@ -63,152 +83,231 @@ def detect_language(text):
     except Exception:
         return "unknown"
 
-def extract_aspects(text):
-    """
-    Estrae le categorie tematiche (aspects) menzionate nel commento/recensione.
-    """
-    text_lower = text.lower()
-    detected_aspects = []
-    
-    for aspect, keywords in ASPECT_KEYWORDS.items():
-        pattern = r'\b(' + '|'.join(re.escape(k) for k in keywords) + r')\b'
-        if re.search(pattern, text_lower):
-            detected_aspects.append(aspect)
-            
-    return detected_aspects
 
-def analyze_sentiment(text):
+def extract_aspects(text: str) -> list[str]:
+    """Estrae le categorie tematiche (aspects) menzionate nel commento/recensione."""
+    text_lower = text.lower()
+    return [aspect for aspect, pattern in _aspect_patterns().items() if pattern.search(text_lower)]
+
+
+def analyze_sentiment(text: str) -> Optional[tuple[float, str]]:
     """
     Analizza il sentiment e mappa l'output normalizzato tra -1.0 e 1.0.
+    Restituisce None se l'analisi non è possibile: il chiamante non deve scrivere un
+    risultato fittizio né marcare il documento come processato.
     """
-    if not sentiment_pipeline or not text:
+    if not text:
         return 0.0, "Neutral"
+    model = get_sentiment_pipeline()
+    if model is None:
+        return None
 
     truncated_text = " ".join(text.split()[:100])
-    
     try:
-        result = sentiment_pipeline(truncated_text)[0]
-        label = result['label'].lower()
-        score = result['score']
+        result = model(truncated_text, truncation=True)[0]
+    except Exception:
+        logger.exception("Errore durante l'analisi del sentiment.")
+        return None
 
-        if "negative" in label or label == "label_0":
-            mapped_label = "Negative"
-            final_score = -score
-        elif "positive" in label or label == "label_2":
-            mapped_label = "Positive"
-            final_score = score
-        else:
-            mapped_label = "Neutral"
-            final_score = 0.0
+    label = result["label"].lower()
+    score = result["score"]
+    if "negative" in label or label == "label_0":
+        return float(-score), "Negative"
+    if "positive" in label or label == "label_2":
+        return float(score), "Positive"
+    return 0.0, "Neutral"
 
-        return float(final_score), mapped_label
-    except Exception as e:
-        print(f"Errore durante l'analisi: {e}")
-        return 0.0, "Neutral"
 
-def process_source_collection(db, collection_name, platform_name, id_extractor, batch_size=50):
+def enrich(original_text: str) -> Optional[dict]:
+    """Campi derivati di Silver (testo pulito, lingua, aspetti, sentiment, versioni). None se il sentiment fallisce."""
+    cleaned = clean_text(original_text)
+    sentiment = analyze_sentiment(cleaned)
+    if sentiment is None:
+        return None
+    score, label = sentiment
+    return {
+        "cleaned_text": cleaned,
+        "sentiment_score": score,
+        "sentiment_label": label,
+        "language": detect_language(cleaned),
+        "aspects": extract_aspects(cleaned),
+        "model_name": MODEL_NAME,
+        "cleaning_version": CLEANING_VERSION,
+    }
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _record_failure(raw_col, doc_id, reason: str) -> None:
+    raw_col.update_one(
+        {"_id": doc_id},
+        {"$inc": {"_governance.attempts": 1}, "$set": {"_governance.error": reason[:500]}},
+    )
+
+
+def process_source_collection(
+    db,
+    collection_name: str,
+    platform_name: str,
+    id_extractor: Callable[[dict], str],
+    batch_size: int = 50,
+    failed_ids: Optional[set] = None,
+) -> tuple[int, int]:
     """
-    Elabora i documenti non ancora processati da una collection Bronze specifica.
-    Garantisce idempotenza, arricchimento (lingua, aspetti, sentiment) e data lineage.
+    Elabora i documenti Bronze non ancora processati (idempotente, con data lineage).
+    Un documento che fallisce resta non processato, con tentativo ed errore registrati nel Bronze;
+    dopo MAX_ATTEMPTS fallimenti non viene più ritentato. Restituisce (elaborati, letti).
     """
+    failed_ids = failed_ids if failed_ids is not None else set()
     raw_col = db[collection_name]
     silver_col = db["silver_data"]
 
-    # Seleziona solo documenti ancora non processati
-    cursor = raw_col.find({"_governance.processed": {"$ne": True}}).limit(batch_size)
+    query = {
+        "_governance.processed": {"$ne": True},
+        "_governance.attempts": {"$not": {"$gte": MAX_ATTEMPTS}},
+        "_id": {"$nin": list(failed_ids)},
+    }
     processed_count = 0
+    seen_count = 0
 
-    for doc in cursor:
-        original_text = doc.get("text", "")
-        cleaned = clean_text(original_text)
-        
-        # 1. Rilevamento lingua
-        lang = detect_language(cleaned)
-        
-        # 2. Estrazione aspetti tematici
-        aspects = extract_aspects(cleaned)
-        
-        # 3. Sentiment Analysis
-        score, label = analyze_sentiment(cleaned)
-        
-        source_id = id_extractor(doc)
-        
-        silver_doc = {
-            "original_text": original_text,
-            "cleaned_text": cleaned,
-            "sentiment_score": score,
-            "sentiment_label": label,
-            "language": lang,
-            "aspects": aspects,
-            "_governance": {
-                "source_platform": platform_name,
-                "extraction_timestamp": datetime.now(timezone.utc).isoformat(),
-                "source_id": str(source_id)
-            }
-        }
-        
-        # Upsert idempotente in Silver (garantito da indice univoco source_platform + source_id)
-        silver_col.update_one(
-            {
+    for doc in raw_col.find(query).limit(batch_size):
+        seen_count += 1
+        try:
+            original_text = doc.get("text") or ""
+            fields = enrich(original_text)
+            if fields is None:
+                raise RuntimeError("analisi del sentiment non riuscita")
+            source_id = str(id_extractor(doc))
+
+            silver_doc = {
+                "original_text": original_text,
+                "published_at": doc.get("published_at"),
+                **fields,
                 "_governance.source_platform": platform_name,
-                "_governance.source_id": str(source_id)
-            },
-            {"$set": silver_doc},
-            upsert=True
-        )
-
-        # Marca il documento Bronze come processato con timestamp di audit
-        raw_col.update_one(
-            {"_id": doc["_id"]},
-            {
-                "$set": {
-                    "_governance.processed": True,
-                    "_governance.processed_at": datetime.now(timezone.utc).isoformat()
-                }
+                "_governance.source_id": source_id,
+                "_governance.extraction_timestamp": doc.get("_governance", {}).get("extraction_timestamp") or _now(),
+                "_governance.processed_at": _now(),
             }
+            # Upsert idempotente (indice univoco source_platform + source_id)
+            silver_col.update_one(
+                {"_governance.source_platform": platform_name, "_governance.source_id": source_id},
+                {"$set": silver_doc},
+                upsert=True,
+            )
+            raw_col.update_one(
+                {"_id": doc["_id"]},
+                {
+                    "$set": {"_governance.processed": True, "_governance.processed_at": _now()},
+                    "$unset": {"_governance.error": ""},
+                },
+            )
+            processed_count += 1
+        except Exception as e:
+            logger.warning("Documento %s/%s non elaborato: %s", collection_name, doc["_id"], e)
+            failed_ids.add(doc["_id"])
+            _record_failure(raw_col, doc["_id"], f"{type(e).__name__}: {e}")
+
+    return processed_count, seen_count
+
+
+def _process_until_empty(db, label: str, **kwargs) -> int:
+    total = 0
+    failed_ids: set = set()
+    while True:
+        processed, seen = process_source_collection(db, failed_ids=failed_ids, **kwargs)
+        total += processed
+        if seen == 0:
+            break
+        logger.info("Batch %s -> Silver: %s/%s documenti (totale finora: %s).", label, processed, seen, total)
+    if failed_ids:
+        logger.warning("%s: %s documenti non elaborati (vedi _governance.error nel Bronze).", label, len(failed_ids))
+    logger.info("Completato %s -> Silver: %s documenti.", label, total)
+    return total
+
+
+def process_unprocessed_data(batch_size: int = 100, db=None) -> None:
+    """Coordina il processamento di tutte le fonti Bronze (YouTube e Letterboxd) a batch."""
+    if get_sentiment_pipeline() is None:
+        raise RuntimeError(
+            "Pipeline NLP non disponibile: installa 'requirements-nlp.txt' e verifica il modello. "
+            "Nessun documento è stato modificato."
         )
-        processed_count += 1
+    db = db if db is not None else get_sync_db()
 
-    return processed_count
+    _process_until_empty(
+        db, "YouTube",
+        collection_name="raw_youtube",
+        platform_name="youtube",
+        id_extractor=lambda doc: doc.get("comment_id") or doc["_id"],
+        batch_size=batch_size,
+    )
+    _process_until_empty(
+        db, "Letterboxd",
+        collection_name="raw_letterboxd",
+        platform_name="letterboxd",
+        # I documenti storici senza review_id usano l'autore, come prima.
+        id_extractor=lambda doc: f"{doc.get('film', 'film')}#{doc.get('review_id') or doc.get('author', 'unknown')}",
+        batch_size=batch_size,
+    )
 
-def process_unprocessed_data(batch_size=100):
-    """
-    Coordina il processamento di tutte le fonti Bronze (YouTube e Letterboxd).
-    Continua a ciclare a batch finché tutti i record non processati vengono elaborati.
-    """
+
+def reprocess_outdated_silver(db, batch_size: int = 100) -> int:
+    """Riesegue l'arricchimento sui record Silver prodotti con un modello o una versione di pulizia obsoleti."""
+    if get_sentiment_pipeline() is None:
+        raise RuntimeError("Pipeline NLP non disponibile: nessun record Silver è stato modificato.")
+    silver_col = db["silver_data"]
+    query = {"$or": [{"model_name": {"$ne": MODEL_NAME}}, {"cleaning_version": {"$not": {"$gte": CLEANING_VERSION}}}]}
+    updated = 0
+    failed_ids: set = set()
+    while True:
+        batch = list(silver_col.find({**query, "_id": {"$nin": list(failed_ids)}}).limit(batch_size))
+        if not batch:
+            break
+        for doc in batch:
+            fields = enrich(doc.get("original_text") or "")
+            if fields is None:
+                failed_ids.add(doc["_id"])
+                continue
+            silver_col.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {**fields, "_governance.processed_at": _now()}},
+            )
+            updated += 1
+    logger.info("Riprocessati %s record Silver obsoleti (%s falliti).", updated, len(failed_ids))
+    return updated
+
+
+def reset_failed(db) -> int:
+    """Azzera tentativi ed errori sui documenti Bronze, così vengono ritentati."""
+    reset = 0
+    for name in ("raw_youtube", "raw_letterboxd"):
+        res = db[name].update_many(
+            {"_governance.attempts": {"$exists": True}, "_governance.processed": {"$ne": True}},
+            {"$unset": {"_governance.attempts": "", "_governance.error": ""}},
+        )
+        reset += res.modified_count
+    logger.info("Azzerati i tentativi su %s documenti Bronze.", reset)
+    return reset
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    setup_logging()
+    parser = argparse.ArgumentParser(description="Pipeline NLP Bronze -> Silver.")
+    parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--retry-failed", action="store_true", help="azzera i tentativi falliti prima di elaborare")
+    parser.add_argument("--reprocess-outdated", action="store_true",
+                        help="riesegue l'arricchimento sui record Silver con modello/versione obsoleti")
+    args = parser.parse_args(argv)
+
     db = get_sync_db()
+    if args.retry_failed:
+        reset_failed(db)
+    process_unprocessed_data(batch_size=args.batch_size, db=db)
+    if args.reprocess_outdated:
+        reprocess_outdated_silver(db, batch_size=args.batch_size)
 
-    # YouTube: comment_id univoco
-    total_yt = 0
-    while True:
-        yt_count = process_source_collection(
-            db,
-            collection_name="raw_youtube",
-            platform_name="youtube",
-            id_extractor=lambda doc: doc.get("comment_id", str(doc.get("_id"))),
-            batch_size=batch_size
-        )
-        total_yt += yt_count
-        if yt_count == 0:
-            break
-        print(f"Batch elaborato da YouTube -> Silver: {yt_count} documenti (totale finora: {total_yt}).")
-    print(f"✅ Totale completato YouTube -> Silver: {total_yt} documenti.")
-
-    # Letterboxd: film + author univoco
-    total_lb = 0
-    while True:
-        lb_count = process_source_collection(
-            db,
-            collection_name="raw_letterboxd",
-            platform_name="letterboxd",
-            id_extractor=lambda doc: f"{doc.get('film', 'film')}#{doc.get('author', 'unknown')}",
-            batch_size=batch_size
-        )
-        total_lb += lb_count
-        if lb_count == 0:
-            break
-        print(f"Batch elaborato da Letterboxd -> Silver: {lb_count} documenti (totale finora: {total_lb}).")
-    print(f"✅ Totale completato Letterboxd -> Silver: {total_lb} documenti.")
 
 if __name__ == "__main__":
-    process_unprocessed_data()
+    main()

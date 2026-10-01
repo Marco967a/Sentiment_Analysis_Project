@@ -1,0 +1,61 @@
+# Vocabolario bilingue (IT/EN) per l'estrazione degli aspetti (Aspect-Based Sentiment).
+# Le parole chiave sono confrontate come parole intere (case-insensitive).
+# Dopo una modifica: incrementare CLEANING_VERSION in src/processing/sentiment.py e lanciare
+# `python -m src.processing.sentiment --reprocess-outdated` per riapplicarlo ai dati esistenti.
+directing:
+  - direction
+  - director
+  - directed
+  - directing
+  - filmmaker
+  - regia
+  - regista
+  - diretto
+acting:
+  - acting
+  - actor
+  - actors
+  - actress
+  - actresses
+  - performance
+  - performances
+  - cast
+  - recitazione
+  - attore
+  - attrice
+  - attori
+  - interpretazione
+soundtrack:
+  - soundtrack
+  - music
+  - composer
+  - original score
+  - colonna sonora
+  - musica
+  - compositore
+visuals:
+  - visuals
+  - cinematography
+  - cgi
+  - vfx
+  - visual effects
+  - special effects
+  - black and white
+  - fotografia
+  - effetti speciali
+  - scenografia
+  - bianco e nero
+  - colori
+plot:
+  - plot
+  - story
+  - storyline
+  - screenplay
+  - script
+  - ending
+  - pacing
+  - trama
+  - sceneggiatura
+  - finale
+  - ritmo
+  - storia

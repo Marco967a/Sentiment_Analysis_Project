@@ -1,30 +1,28 @@
-version: '3.8'
-
 services:
   mongodb:
     image: mongo:6.0
     container_name: sentiment_mongodb
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongodb_data:/data/db
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=root
-      - MONGO_INITDB_ROOT_PASSWORD=example_password
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USERNAME:-root}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD:?Imposta MONGO_ROOT_PASSWORD nel file .env}
     restart: unless-stopped
 
   mongo-express:
-    image: mongo-express:latest
+    image: mongo-express:1.0.2
     container_name: sentiment_mongo_express
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     environment:
-      - ME_CONFIG_MONGODB_ADMINUSERNAME=root
-      - ME_CONFIG_MONGODB_ADMINPASSWORD=example_password
-      - ME_CONFIG_MONGODB_URL=mongodb://root:example_password@mongodb:27017/
-      - ME_CONFIG_BASICAUTH_USERNAME=admin
-      - ME_CONFIG_BASICAUTH_PASSWORD=admin
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=${MONGO_ROOT_USERNAME:-root}
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=${MONGO_ROOT_PASSWORD:?Imposta MONGO_ROOT_PASSWORD nel file .env}
+      - ME_CONFIG_MONGODB_URL=mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD}@mongodb:27017/
+      - ME_CONFIG_BASICAUTH_USERNAME=${MONGO_EXPRESS_USER:-admin}
+      - ME_CONFIG_BASICAUTH_PASSWORD=${MONGO_EXPRESS_PASSWORD:?Imposta MONGO_EXPRESS_PASSWORD nel file .env}
     depends_on:
       - mongodb
 
@@ -37,8 +35,8 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - MONGODB_URI=mongodb://root:example_password@mongodb:27017/
-      - MONGODB_DB_NAME=sentiment_db
+      - MONGODB_URI=mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD}@mongodb:27017/
+      - MONGODB_DB_NAME=${MONGODB_DB_NAME:-sentiment_db}
     depends_on:
       - mongodb
 

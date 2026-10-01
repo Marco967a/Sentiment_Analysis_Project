@@ -91,8 +91,8 @@ sentiment_analysis_project/
 │   └── generate_manual_pdf.py
 ├── src/
 │   ├── db/
-│   │   ├── client.py        # Client MongoDB sincrono (pymongo) e asincrono (motor)
-│   │   └── init_db.py       # Creazione collezioni, schema validation e indici univoci
+│   │   ├── client.py        # Client MongoDB condiviso (pymongo), credenziali mai loggate
+│   │   └── init_db.py       # Collezioni, schema validation (Bronze e Silver) e indici univoci, idempotente
 │   ├── ingestion/
 │   │   ├── letterboxd.py    # Scraper per Letterboxd con upsert idempotente
 │   │   └── youtube.py       # Client YouTube Data API v3 con ranking per like
@@ -120,7 +120,7 @@ Avvia MongoDB, Mongo Express e la Dashboard Streamlit con un solo comando:
 docker compose up -d --build
 ```
 - **Dashboard Streamlit:** `http://localhost:8501`
-- **Mongo Express (Web GUI per DB):** `http://localhost:8081` (user: `admin`, pass: `admin`)
+- **Mongo Express (Web GUI per DB):** `http://localhost:8081` (credenziali: `MONGO_EXPRESS_USER` / `MONGO_EXPRESS_PASSWORD` del file `.env`)
 - **MongoDB:** `localhost:27017`
 
 ---
@@ -131,7 +131,7 @@ docker compose up -d --build
 ```bash
 docker run -d --name sentiment_mongodb -p 27017:27017 \
   -e MONGO_INITDB_ROOT_USERNAME=root \
-  -e MONGO_INITDB_ROOT_PASSWORD=example_password \
+  -e MONGO_INITDB_ROOT_PASSWORD=<la_tua_password> \
   -v sentiment_mongodb_data:/data/db \
   --restart unless-stopped mongo:6.0
 ```
@@ -142,34 +142,34 @@ python3 -m venv venv
 source venv/bin/activate  # Su Windows: venv\Scripts\activate
 
 # Per eseguire la Dashboard Streamlit e l'Ingestione:
-pip install -r requirements.txt
+pip install -e .                      # installa il pacchetto e le dipendenze
 
 # Per eseguire anche la pipeline NLP con modello RoBERTa (PyTorch):
-pip install -r requirements-nlp.txt
+pip install -e ".[nlp]"
 
 cp .env.example .env
 ```
-*(Inserire la propria `YOUTUBE_API_KEY` nel file `.env`).*
+*(Nel file `.env` inserire la propria `YOUTUBE_API_KEY` e password robuste per MongoDB: `docker compose` rifiuta di partire senza `MONGO_ROOT_PASSWORD` e `MONGO_EXPRESS_PASSWORD`).*
 
 #### 3. Inizializzare Database, Regole di Governance e Indici
 ```bash
-python src/db/init_db.py
+python -m src.db.init_db
 ```
 
 #### 4. Eseguire l'Ingestione dei Dati (Bronze Layer)
 - **Da YouTube:**
   ```bash
-  python src/ingestion/youtube.py
+  python -m src.ingestion.youtube          # video da config/youtube_videos.json, oppure --video ID
   ```
 - **Da Letterboxd:**
   ```bash
-  python src/ingestion/letterboxd.py
+  python -m src.ingestion.letterboxd --film dune-part-two --pages 2
   ```
 
 #### 5. Elaborare i Dati con la Pipeline NLP (Silver Layer)
 *(Richiede `pip install -r requirements-nlp.txt`)*
 ```bash
-python src/processing/sentiment.py
+python -m src.processing.sentiment     # opzioni: --retry-failed, --reprocess-outdated
 ```
 
 #### 6. Lanciare la Dashboard Analitica (Gold Layer)
@@ -177,6 +177,18 @@ python src/processing/sentiment.py
 streamlit run src/dashboard/app.py
 ```
 La dashboard sarà raggiungibile all'indirizzo `http://localhost:8501`.
+
+---
+
+### 🧪 Test e qualità del codice
+```bash
+pip install -e ".[dev]"
+ruff check src tests
+pytest
+```
+I test usano `mongomock` e un modello NLP simulato: non servono MongoDB né il download di RoBERTa. La CI (`.github/workflows/ci.yml`) esegue lo stesso su ogni push e pull request.
+
+Ogni documento Bronze che fallisce l'elaborazione resta non processato, con `_governance.attempts` e `_governance.error`; dopo 3 tentativi non viene più ritentato finché non si usa `--retry-failed`. Gli aspetti si configurano in `config/aspects.yaml`.
 
 ---
 
