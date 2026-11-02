@@ -47,3 +47,16 @@ def test_split_clauses_keeps_parenthetical_connector_inside_clause():
         "Amazing visuals.", "The soundtrack was terrible.",
     ]
     assert split_clauses("La colonna sonora, però, è pessima") == ["La colonna sonora è pessima"]
+
+
+def test_clean_text_normalizes_typographic_punctuation():
+    assert clean_text("Non vedo l’ora, l’atmosfera “noir” – bella") == (
+        "Non vedo l'ora, l'atmosfera \"noir\" - bella"
+    )
+
+
+def test_extract_aspects_opinion_only_keywords():
+    text = "Ho guardato il bianco e nero"
+    assert extract_aspects(text) == ["visuals"]
+    assert extract_aspects(text, include_opinion_only=False) == []
+    assert extract_aspects("great cinematography", include_opinion_only=False) == ["visuals"]

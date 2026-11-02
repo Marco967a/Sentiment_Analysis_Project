@@ -209,3 +209,18 @@ def test_aspect_sentiment_empty_without_aspects(fake_model):
 def test_failed_clause_fails_the_document(fake_model):
     fake_model(FakeModel(fail_on="soundtrack"))
     assert sentiment.enrich("Great direction but the soundtrack is dull") is None
+
+
+def test_opinion_only_keyword_needs_an_opinion(fake_model):
+    fake_model(FakeModel("neutral", 0.6))
+    neutral = sentiment.enrich("Ho guardato la serie in bianco e nero")
+    assert neutral["aspects"] == [] and neutral["aspect_sentiments"] == []
+
+    fake_model(FakeModel("positive", 0.9))
+    opinion = sentiment.enrich("Il bianco e nero è bellissimo")
+    assert opinion["aspects"] == ["visuals"]
+
+
+def test_strong_keyword_is_kept_even_when_neutral(fake_model):
+    fake_model(FakeModel("neutral", 0.6))
+    assert sentiment.enrich("Il regista ha girato due documentari")["aspects"] == ["directing"]

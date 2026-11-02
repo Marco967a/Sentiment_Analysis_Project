@@ -30,7 +30,7 @@ ASPECTS_CONFIG = Path(os.getenv("ASPECTS_CONFIG", Path(__file__).resolve().paren
 
 # Versione della logica di pulizia/estrazione: incrementarla quando clean_text o aspects.yaml cambiano,
 # poi usare --reprocess-outdated per riallineare i record Silver esistenti.
-CLEANING_VERSION = 4
+CLEANING_VERSION = 5
 MAX_ATTEMPTS = 3  # dopo N fallimenti un documento Bronze non viene più ritentato (vedi --retry-failed)
 
 
@@ -57,18 +57,34 @@ def get_sentiment_pipeline(model_name: str = MODEL_EN):
     return model
 
 
+def _compile_keywords(keywords) -> Optional[re.Pattern]:
+    if not keywords:
+        return None
+    return re.compile(r"\b(" + "|".join(re.escape(k.lower()) for k in keywords) + r")\b")
+
+
 @lru_cache(maxsize=1)
-def _aspect_patterns() -> dict[str, re.Pattern]:
+def _aspect_patterns() -> dict[str, tuple[Optional[re.Pattern], Optional[re.Pattern]]]:
+    """Per ogni aspetto: (pattern delle parole chiave, pattern delle parole chiave valide solo con un'opinione)."""
     with open(ASPECTS_CONFIG, encoding="utf-8") as f:
         vocabulary = yaml.safe_load(f)
-    return {
-        aspect: re.compile(r"\b(" + "|".join(re.escape(k.lower()) for k in keywords) + r")\b")
-        for aspect, keywords in vocabulary.items()
-    }
+    patterns = {}
+    for aspect, entry in vocabulary.items():
+        if isinstance(entry, list):
+            entry = {"keywords": entry}
+        patterns[aspect] = (_compile_keywords(entry.get("keywords")), _compile_keywords(entry.get("opinion_only")))
+    return patterns
 
 
 def _pipelines_available() -> bool:
     return all(get_sentiment_pipeline(name) is not None for name in (MODEL_EN, MODEL_MULTI))
+
+
+_TYPOGRAPHIC = str.maketrans({
+    "’": "'", "‘": "'", "ʼ": "'", "´": "'", "`": "'",
+    "“": '"', "”": '"', "«": '"', "»": '"',
+    "–": "-", "—": "-",
+})
 
 
 def clean_text(text) -> str:
@@ -81,6 +97,9 @@ def clean_text(text) -> str:
         return ""
     text = re.sub(r'<[^>]*>', ' ', text)
     text = html.unescape(text)
+    # Apostrofi, virgolette e trattini tipografici (frequenti nei commenti) vanno normalizzati: altrimenti
+    # la regex sotto li cancella e fonde le parole ("l’ora" -> "lora").
+    text = text.translate(_TYPOGRAPHIC)
     text = re.sub(r'https?://\S+|www\.\S+', '', text)
     text = re.sub(r'[^\w\s.,!?\'"-]', '', text)
     return re.sub(r'\s+', ' ', text).strip()
@@ -96,10 +115,17 @@ def detect_language(text: str) -> str:
         return "unknown"
 
 
-def extract_aspects(text: str) -> list[str]:
-    """Estrae le categorie tematiche (aspects) menzionate nel commento/recensione."""
+def extract_aspects(text: str, include_opinion_only: bool = True) -> list[str]:
+    """
+    Estrae le categorie tematiche (aspects) menzionate nel commento/recensione.
+    Con include_opinion_only=False ignora le parole chiave ambigue (`opinion_only` in aspects.yaml).
+    """
     text_lower = text.lower()
-    return [aspect for aspect, pattern in _aspect_patterns().items() if pattern.search(text_lower)]
+    found = []
+    for aspect, (strong, weak) in _aspect_patterns().items():
+        if (strong and strong.search(text_lower)) or (include_opinion_only and weak and weak.search(text_lower)):
+            found.append(aspect)
+    return found
 
 
 # Connettivi che di solito introducono un giudizio opposto: ogni parte viene valutata a parte.
@@ -133,13 +159,15 @@ def analyze_aspects(text: str, model_name: str, overall: tuple[float, str]) -> O
         clauses = [text]
     results = []
     for clause in clauses:
-        aspects = extract_aspects(clause)
-        if not aspects:
+        candidates = extract_aspects(clause)
+        if not candidates:
             continue
         sentiment = overall if clause == text else analyze_sentiment(clause, model_name)
         if sentiment is None:
             return None
         score, label = sentiment
+        # Le parole chiave ambigue contano solo se la frase esprime un'opinione.
+        aspects = candidates if label != "Neutral" else extract_aspects(clause, include_opinion_only=False)
         results.extend(
             {"aspect": a, "sentiment_score": score, "sentiment_label": label, "sentence": clause} for a in aspects
         )
@@ -190,7 +218,7 @@ def enrich(original_text: str) -> Optional[dict]:
         "sentiment_score": score,
         "sentiment_label": label,
         "language": language,
-        "aspects": extract_aspects(cleaned),
+        "aspects": list(dict.fromkeys(a["aspect"] for a in aspect_sentiments)),
         "aspect_sentiments": aspect_sentiments,
         "model_name": model_name,
         "cleaning_version": CLEANING_VERSION,
