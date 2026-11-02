@@ -33,7 +33,7 @@ services:
     container_name: sentiment_dashboard
     restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     environment:
       - MONGODB_URI=mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD}@mongodb:27017/
       - MONGODB_DB_NAME=${MONGODB_DB_NAME:-sentiment_db}
