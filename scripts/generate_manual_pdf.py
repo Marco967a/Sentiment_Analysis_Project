@@ -66,7 +66,7 @@ class NumberedCanvas(canvas.Canvas):
         self.line(MARGIN_X, 40, PAGE_WIDTH - MARGIN_X, 40)
 
         # Footer
-        self.drawString(MARGIN_X, 28, "Architettura Medallion • MongoDB 6.0 • Transformers RoBERTa • Streamlit")
+        self.drawString(MARGIN_X, 28, "Architettura Medallion • MongoDB 6.0 • Transformers multilingue • Streamlit")
         page_str = f"Pagina {self._pageNumber} di {total_pages}"
         self.drawRightString(PAGE_WIDTH - MARGIN_X, 28, page_str)
 
@@ -297,7 +297,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         [Paragraph("<b>Progetto:</b>", styles['CoverMetaBold']), Paragraph("Sentiment Analysis & Social Listening Hub", styles['CoverMeta'])],
         [Paragraph("<b>Architettura Dati:</b>", styles['CoverMetaBold']), Paragraph("Medallion Architecture (Bronze, Silver, Gold Layers)", styles['CoverMeta'])],
         [Paragraph("<b>Database & Storage:</b>", styles['CoverMetaBold']), Paragraph("MongoDB 6.0 con JSON Schema Validation e Indici Idempotenti", styles['CoverMeta'])],
-        [Paragraph("<b>Modello NLP:</b>", styles['CoverMetaBold']), Paragraph("Twitter-RoBERTa-Base (Cardiff NLP) • LangDetect • Aspect Mining", styles['CoverMeta'])],
+        [Paragraph("<b>Modello NLP:</b>", styles['CoverMetaBold']), Paragraph("RoBERTa EN + XLM-RoBERTa multilingue (Cardiff NLP) • LangDetect • Aspect Mining", styles['CoverMeta'])],
         [Paragraph("<b>Dashboard Web:</b>", styles['CoverMetaBold']), Paragraph("Streamlit 1.32+ con metriche Gold aggregate e filtri reattivi", styles['CoverMeta'])],
         [Paragraph("<b>Sorgenti Supportate:</b>", styles['CoverMetaBold']), Paragraph("YouTube Data API v3 (Trailer/Video) • Letterboxd BeautifulSoup Scraper (Recensioni)", styles['CoverMeta'])],
         [Paragraph("<b>Versione Documento:</b>", styles['CoverMetaBold']), Paragraph("1.0 (Guida Ufficiale di Riferimento)", styles['CoverMeta'])],
@@ -323,7 +323,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         "<b>Capitolo 3:</b> Requisiti di Sistema, Configurazione `.env` & Avvio dei Container",
         "<b>Capitolo 4:</b> Inizializzazione Database, JSON Schema Validation & Indici Idempotenti",
         "<b>Capitolo 5:</b> Pipeline di Ingestione Dati (YouTube Data API v3 & Letterboxd Scraper)",
-        "<b>Capitolo 6:</b> Pipeline NLP & Arricchimento Silver (RoBERTa, 5 Aspetti Tematici, Lingue)",
+        "<b>Capitolo 6:</b> Pipeline NLP & Arricchimento Silver (Modelli per lingua, 5 Aspetti Tematici, Sentiment per Aspetto)",
         "<b>Capitolo 7:</b> Guida Operativa alla Dashboard Streamlit & Analitiche Gold",
         "<b>Capitolo 8:</b> Risoluzione dei Problemi, Manutenzione & FAQ Operative"
     ]
@@ -347,7 +347,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     ))
     story.append(Paragraph("I punti cardine che contraddistinguono la soluzione includono:", styles['DocBody']))
     story.append(Paragraph("• <b>Rigore di Data Governance:</b> conservazione integrale del lineage di provenienza e validazione dello schema al momento della scrittura nel database.", styles['DocBullet']))
-    story.append(Paragraph("• <b>Aspect-Based Social Listening:</b> scomposizione del sentiment su 5 dimensioni verticali dell'opera (Regia, Cast, Colonna Sonora, Visivo/Estetica, Sceneggiatura/Trama).", styles['DocBullet']))
+    story.append(Paragraph("• <b>Aspect-Based Social Listening:</b> sentiment calcolato separatamente per ciascuna delle 5 dimensioni verticali dell'opera (Regia, Cast, Colonna Sonora, Visivo/Estetica, Sceneggiatura/Trama).", styles['DocBullet']))
     story.append(Paragraph("• <b>Multi-Sorgente Complementare:</b> convergenza tra piattaforme ad altissimo coinvolgimento di massa (YouTube) e community specializzate di appassionati e critici (Letterboxd).", styles['DocBullet']))
 
     story.append(Spacer(1, 4))
@@ -562,12 +562,12 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         [
             Paragraph("3. Aspect Mining", styles['TableCellBold']),
             Paragraph("Pattern Matching bilingue (IT/EN)", styles['TableCell']),
-            Paragraph("Ricerca di keyword tematiche per attribuire ciascun commento a uno o più argomenti del vocabolario cinematografico.", styles['TableCell'])
+            Paragraph("Ricerca di keyword tematiche per attribuire ciascun commento a uno o più argomenti del vocabolario cinematografico. Il commento è diviso in frasi e nei connettivi di contrasto (ma, però, but, however): ogni aspetto riceve il sentiment della frase in cui compare.", styles['TableCell'])
         ],
         [
             Paragraph("4. Sentiment Scoring", styles['TableCellBold']),
-            Paragraph("Transformer RoBERTa<br/>(Cardiff NLP)", styles['TableCell']),
-            Paragraph("Inferenza Deep Learning con mappatura su score continuo [-1.0, +1.0] e classificazione in Positive, Neutral, Negative.", styles['TableCell'])
+            Paragraph("RoBERTa (EN)<br/>XLM-RoBERTa (IT e altre)<br/>(Cardiff NLP)", styles['TableCell']),
+            Paragraph("Il modello è scelto in base alla lingua rilevata (inglese: RoBERTa; italiano e altre lingue: XLM-RoBERTa). Inferenza con mappatura su score continuo [-1.0, +1.0] e classificazione in Positive, Neutral, Negative, sia per l'intero commento sia per ogni aspetto.", styles['TableCell'])
         ]
     ]
     t_nlp = Table(nlp_phases, colWidths=[85, 115, 303])
@@ -634,7 +634,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         ],
         [
             Paragraph("<b>Visualizzazioni Analitiche</b>", styles['TableCellBold']),
-            Paragraph("• <b>Distribuzione Sentiment:</b> conteggio suddiviso per Positive, Neutral e Negative.<br/>• <b>Gradimento per Aspetto:</b> confronto dello score medio tra le 5 aree tematiche.<br/>• <b>Ripartizione Lingue & Canali:</b> metriche di penetrazione geografica e di canale.", styles['TableCell'])
+            Paragraph("• <b>Distribuzione Sentiment:</b> conteggio suddiviso per Positive, Neutral e Negative.<br/>• <b>Gradimento per Aspetto:</b> confronto dello score medio, e dei commenti positivi e negativi, tra le 5 aree tematiche; ogni valore riguarda la frase in cui l'aspetto è citato.<br/>• <b>Ripartizione Lingue & Canali:</b> metriche di penetrazione geografica e di canale.", styles['TableCell'])
         ],
         [
             Paragraph("<b>Social Feed Interattivo</b>", styles['TableCellBold']),

@@ -44,6 +44,13 @@ def build_filter(platform: str, aspect: str) -> dict:
     return query
 
 
+def _format_aspects(doc: dict) -> str:
+    """Aspetti con il sentiment della propria frase, es. "directing (+0.91), soundtrack (-0.74)"."""
+    if doc.get("aspect_sentiments"):
+        return ", ".join(f"{a['aspect']} ({a['sentiment_score']:+.2f})" for a in doc["aspect_sentiments"])
+    return ", ".join(doc.get("aspects", [])) or "-"
+
+
 def main():
     try:
         db = get_sync_db()
@@ -122,11 +129,13 @@ def main():
     with col_g4:
         st.subheader("📌 Sentiment per Singolo Aspetto")
         if aspect_metrics:
-            df_asp_score = pd.DataFrame(aspect_metrics).rename(
-                columns={"_id": "Aspetto", "avg_score": "Score Medio (da -1 a 1)"}
-            )
+            df_asp_score = pd.DataFrame(aspect_metrics).rename(columns={
+                "_id": "Aspetto", "avg_score": "Score Medio (da -1 a 1)",
+                "positive": "Positivi", "negative": "Negativi",
+            })
             st.dataframe(
-                df_asp_score[["Aspetto", "Score Medio (da -1 a 1)"]], use_container_width=True, hide_index=True
+                df_asp_score[["Aspetto", "Score Medio (da -1 a 1)", "Positivi", "Negativi"]],
+                use_container_width=True, hide_index=True,
             )
         else:
             st.write("Nessun dato.")
@@ -142,7 +151,7 @@ def main():
             "Lingua": d.get("language", "N/A"),
             "Sentiment": d.get("sentiment_label"),
             "Score": round(d.get("sentiment_score", 0), 2),
-            "Aspetti": ", ".join(d.get("aspects", [])) if d.get("aspects") else "-",
+            "Aspetti": _format_aspects(d),
             "Testo": d.get("cleaned_text"),
         } for d in recent_docs])
         st.dataframe(df_feed, use_container_width=True, hide_index=True)

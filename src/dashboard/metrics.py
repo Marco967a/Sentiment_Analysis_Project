@@ -14,8 +14,20 @@ def get_gold_metrics(db, filter_query: Optional[dict] = None) -> dict:
         "platforms": [{"$group": {"_id": "$_governance.source_platform", "count": {"$sum": 1}}}],
         "avg_score": [{"$group": {"_id": None, "average": {"$avg": "$sentiment_score"}}}],
         "aspects": [
-            {"$unwind": "$aspects"},
-            {"$group": {"_id": "$aspects", "count": {"$sum": 1}, "avg_score": {"$avg": "$sentiment_score"}}},
+            # I record non ancora riprocessati (senza aspect_sentiments) ricadono sul sentiment dell'intero commento.
+            {"$project": {"entries": {"$ifNull": ["$aspect_sentiments", {"$map": {
+                "input": {"$ifNull": ["$aspects", []]},
+                "as": "a",
+                "in": {"aspect": "$$a", "sentiment_score": "$sentiment_score", "sentiment_label": "$sentiment_label"},
+            }}]}}},
+            {"$unwind": "$entries"},
+            {"$group": {
+                "_id": "$entries.aspect",
+                "count": {"$sum": 1},
+                "avg_score": {"$avg": "$entries.sentiment_score"},
+                "positive": {"$sum": {"$cond": [{"$eq": ["$entries.sentiment_label", "Positive"]}, 1, 0]}},
+                "negative": {"$sum": {"$cond": [{"$eq": ["$entries.sentiment_label", "Negative"]}, 1, 0]}},
+            }},
             {"$sort": {"count": -1}},
         ],
         "languages": [

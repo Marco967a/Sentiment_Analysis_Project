@@ -68,6 +68,20 @@ SILVER_SCHEMA = {
             "sentiment_label": {"enum": ["Positive", "Negative", "Neutral"]},
             "language": {"bsonType": "string", "description": "codice lingua rilevato (en, it, es, unknown)"},
             "aspects": {"bsonType": "array", "items": {"bsonType": "string"}},
+            "aspect_sentiments": {
+                "bsonType": "array",
+                "description": "sentiment della frase in cui compare ciascun aspetto",
+                "items": {
+                    "bsonType": "object",
+                    "required": ["aspect", "sentiment_score", "sentiment_label"],
+                    "properties": {
+                        "aspect": {"bsonType": "string"},
+                        "sentiment_score": {"bsonType": "double", "minimum": -1.0, "maximum": 1.0},
+                        "sentiment_label": {"enum": ["Positive", "Negative", "Neutral"]},
+                        "sentence": {"bsonType": "string"},
+                    },
+                },
+            },
             "published_at": {"bsonType": ["string", "null"], "description": "data originale del contenuto (ISO)"},
             "model_name": {"bsonType": "string", "description": "modello NLP che ha prodotto il sentiment"},
             "cleaning_version": {"bsonType": INT_TYPES},

@@ -45,3 +45,19 @@ def test_feed_orders_by_published_at(db):
     ])
     ids = [d["_governance"]["source_id"] for d in metrics.get_filtered_documents(db)]
     assert ids == ["2", "1", "3"]
+
+
+def test_aspect_metrics_use_per_aspect_sentiment_with_legacy_fallback(db):
+    mixed = _silver(1, "youtube", "Positive", 0.2, ["directing", "soundtrack"])
+    mixed["aspect_sentiments"] = [
+        {"aspect": "directing", "sentiment_score": 0.9, "sentiment_label": "Positive"},
+        {"aspect": "soundtrack", "sentiment_score": -0.7, "sentiment_label": "Negative"},
+    ]
+    legacy = _silver(2, "youtube", "Negative", -0.5, ["soundtrack"])
+    db["silver_data"].insert_many([mixed, legacy])
+
+    by_aspect = {d["_id"]: d for d in metrics.get_gold_metrics(db)["aspects"]}
+    assert by_aspect["directing"]["avg_score"] == 0.9
+    assert by_aspect["soundtrack"]["count"] == 2
+    assert abs(by_aspect["soundtrack"]["avg_score"] - (-0.6)) < 1e-9
+    assert by_aspect["soundtrack"]["negative"] == 2 and by_aspect["soundtrack"]["positive"] == 0

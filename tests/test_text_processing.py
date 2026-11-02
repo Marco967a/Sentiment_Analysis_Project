@@ -28,3 +28,22 @@ def test_extract_aspects_bilingual_and_multiword():
 
 def test_detect_language_short_text():
     assert detect_language("hi") == "unknown"
+
+
+def test_split_clauses_on_sentences_and_contrast():
+    from src.processing.sentiment import split_clauses
+
+    assert split_clauses("Regia splendida ma colonna sonora noiosa.") == ["Regia splendida", "colonna sonora noiosa."]
+    assert split_clauses("Great acting, but the plot is weak. Loved the music!") == [
+        "Great acting", "the plot is weak.", "Loved the music!",
+    ]
+    assert split_clauses("Tutto in una frase senza contrasto") == ["Tutto in una frase senza contrasto"]
+
+
+def test_split_clauses_keeps_parenthetical_connector_inside_clause():
+    from src.processing.sentiment import split_clauses
+
+    assert split_clauses("Amazing visuals. The soundtrack, however, was terrible.") == [
+        "Amazing visuals.", "The soundtrack was terrible.",
+    ]
+    assert split_clauses("La colonna sonora, però, è pessima") == ["La colonna sonora è pessima"]

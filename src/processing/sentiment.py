@@ -30,7 +30,7 @@ ASPECTS_CONFIG = Path(os.getenv("ASPECTS_CONFIG", Path(__file__).resolve().paren
 
 # Versione della logica di pulizia/estrazione: incrementarla quando clean_text o aspects.yaml cambiano,
 # poi usare --reprocess-outdated per riallineare i record Silver esistenti.
-CLEANING_VERSION = 3
+CLEANING_VERSION = 4
 MAX_ATTEMPTS = 3  # dopo N fallimenti un documento Bronze non viene più ritentato (vedi --retry-failed)
 
 
@@ -102,6 +102,50 @@ def extract_aspects(text: str) -> list[str]:
     return [aspect for aspect, pattern in _aspect_patterns().items() if pattern.search(text_lower)]
 
 
+# Connettivi che di solito introducono un giudizio opposto: ogni parte viene valutata a parte.
+_CONTRAST = re.compile(
+    r"\b(?:ma|però|pero|tuttavia|anche se|nonostante|but|however|although|though|whereas)\b", re.IGNORECASE
+)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+# "La colonna sonora, però, è pessima": il connettivo tra virgole è una parentesi, non separa due giudizi.
+_PARENTHETICAL = re.compile(r",\s*(?:però|pero|tuttavia|however|though)\s*,", re.IGNORECASE)
+
+
+def split_clauses(text: str) -> list[str]:
+    """Divide il testo in frasi e, dentro ogni frase, nei punti di contrasto ("ma", "but", ...)."""
+    clauses = []
+    for sentence in _SENTENCE_END.split(" ".join(_PARENTHETICAL.sub(" ", text).split())):
+        for part in _CONTRAST.split(sentence):
+            part = part.strip(" ,;-")
+            if part:
+                clauses.append(part)
+    return clauses
+
+
+def analyze_aspects(text: str, model_name: str, overall: tuple[float, str]) -> Optional[list[dict]]:
+    """
+    Sentiment per aspetto: ogni aspetto prende il sentiment della frase/clausola in cui compare,
+    non quello dell'intero commento. Restituisce None se l'analisi di una clausola fallisce.
+    Un testo senza divisioni riusa il sentiment complessivo (nessuna inferenza aggiuntiva).
+    """
+    clauses = split_clauses(text)
+    if len(clauses) <= 1:
+        clauses = [text]
+    results = []
+    for clause in clauses:
+        aspects = extract_aspects(clause)
+        if not aspects:
+            continue
+        sentiment = overall if clause == text else analyze_sentiment(clause, model_name)
+        if sentiment is None:
+            return None
+        score, label = sentiment
+        results.extend(
+            {"aspect": a, "sentiment_score": score, "sentiment_label": label, "sentence": clause} for a in aspects
+        )
+    return results
+
+
 def analyze_sentiment(text: str, model_name: str = MODEL_EN) -> Optional[tuple[float, str]]:
     """
     Analizza il sentiment e mappa l'output normalizzato tra -1.0 e 1.0.
@@ -138,12 +182,16 @@ def enrich(original_text: str) -> Optional[dict]:
     if sentiment is None:
         return None
     score, label = sentiment
+    aspect_sentiments = analyze_aspects(cleaned, model_name, sentiment)
+    if aspect_sentiments is None:
+        return None
     return {
         "cleaned_text": cleaned,
         "sentiment_score": score,
         "sentiment_label": label,
         "language": language,
         "aspects": extract_aspects(cleaned),
+        "aspect_sentiments": aspect_sentiments,
         "model_name": model_name,
         "cleaning_version": CLEANING_VERSION,
     }

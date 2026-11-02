@@ -162,3 +162,50 @@ def test_reprocess_picks_records_with_wrong_model_for_language(fake_model, db):
          "_governance": {"source_platform": "t", "source_id": "2", "extraction_timestamp": "x"}},
     ])
     assert sentiment.reprocess_outdated_silver(db) == 1
+
+
+class KeywordModel:
+    """Modello simulato: positivo se la frase contiene 'splendid'/'great', negativo se 'noios'/'weak'."""
+
+    def __call__(self, text, truncation=True, max_length=None):
+        low = text.lower()
+        if any(w in low for w in ("splendid", "great")):
+            return [{"label": "positive", "score": 0.9}]
+        if any(w in low for w in ("noios", "weak")):
+            return [{"label": "negative", "score": 0.8}]
+        return [{"label": "neutral", "score": 0.5}]
+
+
+def test_aspect_sentiment_is_per_clause(fake_model):
+    fake_model(KeywordModel())
+    fields = sentiment.enrich("Regia splendida ma colonna sonora noiosa.")
+    by_aspect = {a["aspect"]: a for a in fields["aspect_sentiments"]}
+    assert by_aspect["directing"]["sentiment_label"] == "Positive"
+    assert by_aspect["directing"]["sentiment_score"] == 0.9
+    assert by_aspect["soundtrack"]["sentiment_label"] == "Negative"
+    assert by_aspect["soundtrack"]["sentiment_score"] == -0.8
+    assert set(fields["aspects"]) == {"directing", "soundtrack"}
+
+
+def test_aspect_sentiment_reuses_overall_for_single_clause(fake_model):
+    calls = []
+
+    class Counting(FakeModel):
+        def __call__(self, text, **kwargs):
+            calls.append(text)
+            return super().__call__(text, **kwargs)
+
+    fake_model(Counting("negative", 0.7))
+    fields = sentiment.enrich("The director did a terrible job")
+    assert len(calls) == 1
+    assert fields["aspect_sentiments"][0]["sentiment_score"] == -0.7
+
+
+def test_aspect_sentiment_empty_without_aspects(fake_model):
+    fake_model(FakeModel())
+    assert sentiment.enrich("Nothing relevant here at all")["aspect_sentiments"] == []
+
+
+def test_failed_clause_fails_the_document(fake_model):
+    fake_model(FakeModel(fail_on="soundtrack"))
+    assert sentiment.enrich("Great direction but the soundtrack is dull") is None

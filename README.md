@@ -70,6 +70,8 @@ flowchart TD
     - 🎵 **`soundtrack`**: colonna sonora, musica, audio (es. Hans Zimmer).
     - 🎨 **`visuals`**: cinematografia, estetica, effetti visivi, CGI.
     - 📖 **`plot`**: trama, storia, sceneggiatura, ritmo, finale.
+  - **Sentiment per aspetto:** il commento viene diviso in frasi e, dentro la frase, nei connettivi di contrasto (*ma*, *però*, *but*, *however*…). Ogni aspetto riceve il sentiment della frase in cui compare (`aspect_sentiments`: aspetto, score, label, frase), quindi "Regia splendida ma colonna sonora noiosa" dà `directing` positivo e `soundtrack` negativo. Un commento senza divisioni riusa il sentiment complessivo, senza inferenze aggiuntive.
+  - *Limiti noti:* un aspetto vale quanto la clausola in cui compare; i contrasti senza connettivo ("Regia splendida, colonna sonora noiosa") e le subordinate ("Sebbene la regia sia ottima, la trama è debole") non vengono separati, e le clausole senza keyword ("il film è lungo") non generano aspetti.
 - **Rilevamento Automatico della Lingua:** identificazione ISO (`it`, `en`, `es`, ecc.) con libreria `langdetect`.
 - **Dashboard Interattiva in Streamlit:**
   - Filtri dinamici in sidebar per piattaforma e per singolo aspetto.
@@ -190,6 +192,8 @@ pytest
 I test usano `mongomock` e un modello NLP simulato: non servono MongoDB né il download dei modelli. La CI (`.github/workflows/ci.yml`) esegue lo stesso su ogni push e pull request.
 
 Ogni documento Bronze che fallisce l'elaborazione resta non processato, con `_governance.attempts` e `_governance.error`; dopo 3 tentativi non viene più ritentato finché non si usa `--retry-failed`. Gli aspetti si configurano in `config/aspects.yaml`.
+
+Dopo l'aggiornamento allo schema con `aspect_sentiments`, eseguire in ordine `python -m src.db.init_db` (aggiorna il validatore di `silver_data`) e `python -m src.processing.sentiment --reprocess-outdated` (ricalcola i record esistenti). Finché un record non è riprocessato, la dashboard usa per i suoi aspetti il sentiment dell'intero commento.
 
 ---
 
