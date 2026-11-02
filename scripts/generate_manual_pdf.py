@@ -420,7 +420,8 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         "MONGODB_URI=mongodb://root:CAMBIA_QUESTA_PASSWORD@localhost:27017/",
         "MONGODB_DB_NAME=sentiment_db",
         "YOUTUBE_API_KEY=AIzaSyBcsZVJ0ZVJqq-ESEMPIO_API_KEY",
-        "TRANSFORMERS_MODEL=cardiffnlp/twitter-roberta-base-sentiment-latest"
+        "TRANSFORMERS_MODEL_EN=cardiffnlp/twitter-roberta-base-sentiment-latest",
+        "TRANSFORMERS_MODEL_MULTI=cardiffnlp/twitter-xlm-roberta-base-sentiment"
     ]
     story.append(make_code_box(env_code))
 

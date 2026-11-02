@@ -22,28 +22,36 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = os.getenv("TRANSFORMERS_MODEL", "cardiffnlp/twitter-roberta-base-sentiment-latest")
+# Routing per lingua: il modello inglese è il più accurato su 'en' ma fallisce sull'italiano (vedi
+# scripts/benchmark_models.py); tutte le altre lingue usano il modello multilingue.
+MODEL_EN = os.getenv("TRANSFORMERS_MODEL_EN", "cardiffnlp/twitter-roberta-base-sentiment-latest")
+MODEL_MULTI = os.getenv("TRANSFORMERS_MODEL_MULTI", "cardiffnlp/twitter-xlm-roberta-base-sentiment")
 ASPECTS_CONFIG = Path(os.getenv("ASPECTS_CONFIG", Path(__file__).resolve().parents[2] / "config" / "aspects.yaml"))
 
 # Versione della logica di pulizia/estrazione: incrementarla quando clean_text o aspects.yaml cambiano,
 # poi usare --reprocess-outdated per riallineare i record Silver esistenti.
-CLEANING_VERSION = 2
+CLEANING_VERSION = 3
 MAX_ATTEMPTS = 3  # dopo N fallimenti un documento Bronze non viene più ritentato (vedi --retry-failed)
 
 
-@lru_cache(maxsize=1)
-def get_sentiment_pipeline():
+def select_model(language: str) -> str:
+    """Modello di sentiment per la lingua rilevata: inglese -> MODEL_EN, altrimenti MODEL_MULTI."""
+    return MODEL_EN if language == "en" else MODEL_MULTI
+
+
+@lru_cache(maxsize=2)
+def get_sentiment_pipeline(model_name: str = MODEL_EN):
     """Carica il modello NLP alla prima richiesta (nessun effetto collaterale all'import). None se non disponibile."""
     try:
         from transformers import pipeline
     except ImportError:
         logger.error("'transformers'/'torch' non installati: installa requirements-nlp.txt.")
         return None
-    logger.info("Caricamento del modello NLP: %s...", MODEL_NAME)
+    logger.info("Caricamento del modello NLP: %s...", model_name)
     try:
-        model = pipeline("sentiment-analysis", model=MODEL_NAME, tokenizer=MODEL_NAME)
+        model = pipeline("sentiment-analysis", model=model_name, tokenizer=model_name)
     except Exception:
-        logger.exception("Errore nel caricamento del modello %s.", MODEL_NAME)
+        logger.exception("Errore nel caricamento del modello %s.", model_name)
         return None
     logger.info("Modello caricato con successo.")
     return model
@@ -57,6 +65,10 @@ def _aspect_patterns() -> dict[str, re.Pattern]:
         aspect: re.compile(r"\b(" + "|".join(re.escape(k.lower()) for k in keywords) + r")\b")
         for aspect, keywords in vocabulary.items()
     }
+
+
+def _pipelines_available() -> bool:
+    return all(get_sentiment_pipeline(name) is not None for name in (MODEL_EN, MODEL_MULTI))
 
 
 def clean_text(text) -> str:
@@ -90,7 +102,7 @@ def extract_aspects(text: str) -> list[str]:
     return [aspect for aspect, pattern in _aspect_patterns().items() if pattern.search(text_lower)]
 
 
-def analyze_sentiment(text: str) -> Optional[tuple[float, str]]:
+def analyze_sentiment(text: str, model_name: str = MODEL_EN) -> Optional[tuple[float, str]]:
     """
     Analizza il sentiment e mappa l'output normalizzato tra -1.0 e 1.0.
     Restituisce None se l'analisi non è possibile: il chiamante non deve scrivere un
@@ -98,13 +110,12 @@ def analyze_sentiment(text: str) -> Optional[tuple[float, str]]:
     """
     if not text:
         return 0.0, "Neutral"
-    model = get_sentiment_pipeline()
+    model = get_sentiment_pipeline(model_name)
     if model is None:
         return None
 
-    truncated_text = " ".join(text.split()[:100])
     try:
-        result = model(truncated_text, truncation=True)[0]
+        result = model(text, truncation=True, max_length=512)[0]
     except Exception:
         logger.exception("Errore durante l'analisi del sentiment.")
         return None
@@ -121,7 +132,9 @@ def analyze_sentiment(text: str) -> Optional[tuple[float, str]]:
 def enrich(original_text: str) -> Optional[dict]:
     """Campi derivati di Silver (testo pulito, lingua, aspetti, sentiment, versioni). None se il sentiment fallisce."""
     cleaned = clean_text(original_text)
-    sentiment = analyze_sentiment(cleaned)
+    language = detect_language(cleaned)
+    model_name = select_model(language)
+    sentiment = analyze_sentiment(cleaned, model_name)
     if sentiment is None:
         return None
     score, label = sentiment
@@ -129,9 +142,9 @@ def enrich(original_text: str) -> Optional[dict]:
         "cleaned_text": cleaned,
         "sentiment_score": score,
         "sentiment_label": label,
-        "language": detect_language(cleaned),
+        "language": language,
         "aspects": extract_aspects(cleaned),
-        "model_name": MODEL_NAME,
+        "model_name": model_name,
         "cleaning_version": CLEANING_VERSION,
     }
 
@@ -229,9 +242,9 @@ def _process_until_empty(db, label: str, **kwargs) -> int:
 
 def process_unprocessed_data(batch_size: int = 100, db=None) -> None:
     """Coordina il processamento di tutte le fonti Bronze (YouTube e Letterboxd) a batch."""
-    if get_sentiment_pipeline() is None:
+    if not _pipelines_available():
         raise RuntimeError(
-            "Pipeline NLP non disponibile: installa 'requirements-nlp.txt' e verifica il modello. "
+            "Pipeline NLP non disponibile: installa 'requirements-nlp.txt' e verifica i modelli. "
             "Nessun documento è stato modificato."
         )
     db = db if db is not None else get_sync_db()
@@ -255,10 +268,16 @@ def process_unprocessed_data(batch_size: int = 100, db=None) -> None:
 
 def reprocess_outdated_silver(db, batch_size: int = 100) -> int:
     """Riesegue l'arricchimento sui record Silver prodotti con un modello o una versione di pulizia obsoleti."""
-    if get_sentiment_pipeline() is None:
+    if not _pipelines_available():
         raise RuntimeError("Pipeline NLP non disponibile: nessun record Silver è stato modificato.")
     silver_col = db["silver_data"]
-    query = {"$or": [{"model_name": {"$ne": MODEL_NAME}}, {"cleaning_version": {"$not": {"$gte": CLEANING_VERSION}}}]}
+    query = {
+        "$or": [
+            {"language": "en", "model_name": {"$ne": MODEL_EN}},
+            {"language": {"$ne": "en"}, "model_name": {"$ne": MODEL_MULTI}},
+            {"cleaning_version": {"$not": {"$gte": CLEANING_VERSION}}},
+        ]
+    }
     updated = 0
     failed_ids: set = set()
     while True:

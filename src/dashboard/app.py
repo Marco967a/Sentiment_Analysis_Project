@@ -16,7 +16,7 @@ CACHE_TTL_SECONDS = 60
 st.set_page_config(page_title="Social Listening & Sentiment Hub", layout="wide", page_icon="🎬")
 
 st.title("🎬 Sentiment Analysis & Social Listening Hub")
-st.caption("Architettura Medallion & Data Governance con MongoDB, RoBERTa NLP e Aspect Extraction")
+st.caption("Architettura Medallion & Data Governance con MongoDB, NLP multilingue e Aspect Extraction")
 
 
 # Il parametro con prefisso "_" è escluso dall'hashing di Streamlit; la chiave di cache sono i filtri.

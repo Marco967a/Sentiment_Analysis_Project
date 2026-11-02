@@ -24,7 +24,7 @@ flowchart TD
     end
 
     subgraph Silver [Silver Layer - Enriched & Validated]
-        NLP[Pipeline NLP & Data Cleaning<br/>• Pulizia regex<br/>• Rilevamento lingua: langdetect<br/>• Aspect Extraction: 5 Topic<br/>• RoBERTa Sentiment Model]
+        NLP[Pipeline NLP & Data Cleaning<br/>• Pulizia regex<br/>• Rilevamento lingua: langdetect<br/>• Aspect Extraction: 5 Topic<br/>• Sentiment multilingue con routing per lingua]
         S_DATA[(silver_data<br/>MongoDB JSON Schema Validation<br/>Unique Index: source_platform + source_id)]
     end
 
@@ -60,7 +60,8 @@ flowchart TD
   - **YouTube API v3:** estrazione commenti ordinati per rilevanza e conteggio like.
   - **Letterboxd:** crawler BeautifulSoup4 adattato al layout DOM moderno (`article.production-viewing`).
 - **Analisi Sentiment con Deep Learning:**
-  - Modello Transformer RoBERTa (`cardiffnlp/twitter-roberta-base-sentiment-latest`).
+  - Routing sulla lingua rilevata: inglese con RoBERTa (`cardiffnlp/twitter-roberta-base-sentiment-latest`), italiano e altre lingue con XLM-RoBERTa (`cardiffnlp/twitter-xlm-roberta-base-sentiment`). Entrambi sono configurabili da `.env` (`TRANSFORMERS_MODEL_EN`, `TRANSFORMERS_MODEL_MULTI`) e caricati solo quando servono.
+  - Su un campione etichettato di 72 frasi (`tests/data/sentiment_eval.csv`, riproducibile con `python scripts/benchmark_models.py`) il modello inglese raggiunge accuracy 0.97 su EN ma 0.39 su IT, mentre XLM-RoBERTa ottiene 0.83 su entrambe le lingue.
   - Score continuo normalizzato da `-1.0` (massima negatività) a `+1.0` (massima positività) con classificazione categorica (*Positive*, *Neutral*, *Negative*).
 - **Aspect-Based Social Listening:**
   - Estrazione automatica bilingue (IT/EN) degli argomenti trattati nel commento:
@@ -97,7 +98,7 @@ sentiment_analysis_project/
 │   │   ├── letterboxd.py    # Scraper per Letterboxd con upsert idempotente
 │   │   └── youtube.py       # Client YouTube Data API v3 con ranking per like
 │   ├── processing/
-│   │   └── sentiment.py     # Pipeline NLP (pulizia, lingua, aspetti, RoBERTa)
+│   │   └── sentiment.py     # Pipeline NLP (pulizia, lingua, aspetti, sentiment)
 │   └── dashboard/
 │       └── app.py           # Dashboard analitica Streamlit
 ├── Dockerfile               # Build dell'immagine Streamlit
@@ -144,7 +145,7 @@ source venv/bin/activate  # Su Windows: venv\Scripts\activate
 # Per eseguire la Dashboard Streamlit e l'Ingestione:
 pip install -e .                      # installa il pacchetto e le dipendenze
 
-# Per eseguire anche la pipeline NLP con modello RoBERTa (PyTorch):
+# Per eseguire anche la pipeline NLP con i modelli RoBERTa/XLM-RoBERTa (PyTorch):
 pip install -e ".[nlp]"
 
 cp .env.example .env
@@ -186,7 +187,7 @@ pip install -e ".[dev]"
 ruff check src tests
 pytest
 ```
-I test usano `mongomock` e un modello NLP simulato: non servono MongoDB né il download di RoBERTa. La CI (`.github/workflows/ci.yml`) esegue lo stesso su ogni push e pull request.
+I test usano `mongomock` e un modello NLP simulato: non servono MongoDB né il download dei modelli. La CI (`.github/workflows/ci.yml`) esegue lo stesso su ogni push e pull request.
 
 Ogni documento Bronze che fallisce l'elaborazione resta non processato, con `_governance.attempts` e `_governance.error`; dopo 3 tentativi non viene più ritentato finché non si usa `--retry-failed`. Gli aspetti si configurano in `config/aspects.yaml`.
 

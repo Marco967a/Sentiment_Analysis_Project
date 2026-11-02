@@ -7,7 +7,7 @@ class FakeModel:
     def __init__(self, label="positive", score=0.9, fail_on=None):
         self.label, self.score, self.fail_on = label, score, fail_on
 
-    def __call__(self, text, truncation=True):
+    def __call__(self, text, truncation=True, max_length=None):
         if self.fail_on and self.fail_on in text:
             raise ValueError("boom")
         return [{"label": self.label, "score": self.score}]
@@ -16,7 +16,7 @@ class FakeModel:
 @pytest.fixture
 def fake_model(monkeypatch):
     def install(model):
-        monkeypatch.setattr(sentiment, "get_sentiment_pipeline", lambda: model)
+        monkeypatch.setattr(sentiment, "get_sentiment_pipeline", lambda *args, **kwargs: model)
     return install
 
 
@@ -63,7 +63,7 @@ def test_processing_is_idempotent_and_marks_bronze(fake_model, db):
     assert db["silver_data"].count_documents({}) == 2
     silver = db["silver_data"].find_one({"_governance.source_id": "b"})
     assert silver["aspects"] == ["directing"]
-    assert silver["model_name"] == sentiment.MODEL_NAME
+    assert silver["model_name"] == sentiment.select_model(silver["language"])
     assert silver["cleaning_version"] == sentiment.CLEANING_VERSION
     assert silver["published_at"] == "2024-01-01T00:00:00Z"
     assert db["raw_youtube"].count_documents({"_governance.processed": True}) == 2
@@ -121,3 +121,44 @@ def test_letterboxd_legacy_docs_without_review_id_keep_old_source_id(fake_model,
     })
     sentiment.process_unprocessed_data(db=db)
     assert db["silver_data"].find_one({})["_governance"]["source_id"] == "dune#bob"
+
+
+def test_select_model_routes_by_language():
+    assert sentiment.select_model("en") == sentiment.MODEL_EN
+    for lang in ("it", "es", "unknown"):
+        assert sentiment.select_model(lang) == sentiment.MODEL_MULTI
+
+
+def test_enrich_uses_multilingual_model_for_italian(fake_model):
+    fake_model(FakeModel())
+    fields = sentiment.enrich("Un film bellissimo, la regia è davvero magnifica e il finale commovente.")
+    assert fields["language"] == "it"
+    assert fields["model_name"] == sentiment.MODEL_MULTI
+
+
+def test_enrich_requests_the_model_selected_for_the_language(monkeypatch):
+    requested = []
+
+    def fake_get(name=sentiment.MODEL_EN):
+        requested.append(name)
+        return FakeModel()
+
+    monkeypatch.setattr(sentiment, "get_sentiment_pipeline", fake_get)
+    sentiment.enrich("This movie has a wonderful story and the acting is great from start to end.")
+    sentiment.enrich("Un film bellissimo, la regia è davvero magnifica e il finale commovente.")
+    assert requested == [sentiment.MODEL_EN, sentiment.MODEL_MULTI]
+
+
+def test_reprocess_picks_records_with_wrong_model_for_language(fake_model, db):
+    fake_model(FakeModel())
+    base = {
+        "original_text": "x", "cleaned_text": "x", "sentiment_score": 0.1, "sentiment_label": "Positive",
+        "cleaning_version": sentiment.CLEANING_VERSION,
+    }
+    db["silver_data"].insert_many([
+        {**base, "language": "it", "model_name": sentiment.MODEL_EN,
+         "_governance": {"source_platform": "t", "source_id": "1", "extraction_timestamp": "x"}},
+        {**base, "language": "en", "model_name": sentiment.MODEL_EN,
+         "_governance": {"source_platform": "t", "source_id": "2", "extraction_timestamp": "x"}},
+    ])
+    assert sentiment.reprocess_outdated_silver(db) == 1

@@ -22,6 +22,7 @@ __pycache__/
 # Data & Model caches
 .cache/
 data/
+!tests/data/
 *.log
 
 # OS generated files
