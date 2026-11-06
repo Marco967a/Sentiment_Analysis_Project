@@ -1,62 +1,55 @@
-import streamlit as st
-import pandas as pd
 import sys
-import os
+from pathlib import Path
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+import pandas as pd
+import streamlit as st
+
+# `streamlit run src/dashboard/app.py` (anche su Streamlit Cloud) non mette la root del repo in sys.path:
+# serve solo qui, perché questo è l'unico file lanciato come script e non come modulo (-m).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.dashboard.metrics import get_filter_options, get_filtered_documents, get_gold_metrics
 from src.db.client import get_sync_db
+
+CACHE_TTL_SECONDS = 60
 
 st.set_page_config(page_title="Social Listening & Sentiment Hub", layout="wide", page_icon="🎬")
 
 st.title("🎬 Sentiment Analysis & Social Listening Hub")
-st.caption("Architettura Medallion & Data Governance con MongoDB, RoBERTa NLP e Aspect Extraction")
+st.caption("Architettura Medallion & Data Governance con MongoDB, NLP multilingue e Aspect Extraction")
 
-def get_gold_metrics(db, filter_query=None):
-    """
-    Esegue pipeline di aggregazione su MongoDB per ottenere le metriche di livello Gold.
-    """
-    silver_col = db["silver_data"]
-    match_stage = [{"$match": filter_query}] if filter_query else []
 
-    # 1. Distribuzione Sentiment
-    sentiment_counts = list(silver_col.aggregate(match_stage + [
-        {"$group": {"_id": "$sentiment_label", "count": {"$sum": 1}}}
-    ]))
-    
-    # 2. Distribuzione Piattaforme
-    platform_counts = list(silver_col.aggregate(match_stage + [
-        {"$group": {"_id": "$_governance.source_platform", "count": {"$sum": 1}}}
-    ]))
+# Il parametro con prefisso "_" è escluso dall'hashing di Streamlit; la chiave di cache sono i filtri.
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def cached_filter_options(_db):
+    return get_filter_options(_db)
 
-    # 3. Score Medio
-    avg_score = list(silver_col.aggregate(match_stage + [
-        {"$group": {"_id": None, "average": {"$avg": "$sentiment_score"}}}
-    ]))
 
-    # 4. Distribuzione Aspetti Tematici (Aspect-Based Listening)
-    aspect_metrics = list(silver_col.aggregate(match_stage + [
-        {"$unwind": "$aspects"},
-        {"$group": {
-            "_id": "$aspects",
-            "count": {"$sum": 1},
-            "avg_score": {"$avg": "$sentiment_score"}
-        }},
-        {"$sort": {"count": -1}}
-    ]))
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def cached_metrics(_db, platform: str, aspect: str):
+    return get_gold_metrics(_db, build_filter(platform, aspect))
 
-    # 5. Distribuzione Lingue
-    language_counts = list(silver_col.aggregate(match_stage + [
-        {"$group": {"_id": "$language", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}}
-    ]))
 
-    return sentiment_counts, platform_counts, avg_score, aspect_metrics, language_counts
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def cached_feed(_db, platform: str, aspect: str, limit: int):
+    return get_filtered_documents(_db, build_filter(platform, aspect), limit=limit)
 
-def get_filtered_documents(db, filter_query=None, limit=25):
-    silver_col = db["silver_data"]
-    query = filter_query or {}
-    docs = list(silver_col.find(query).sort("_governance.extraction_timestamp", -1).limit(limit))
-    return docs
+
+def build_filter(platform: str, aspect: str) -> dict:
+    query = {}
+    if platform != "Tutte":
+        query["_governance.source_platform"] = platform
+    if aspect != "Tutti":
+        query["aspects"] = aspect
+    return query
+
+
+def _format_aspects(doc: dict) -> str:
+    """Aspetti con il sentiment della propria frase, es. "directing (+0.91), soundtrack (-0.74)"."""
+    if doc.get("aspect_sentiments"):
+        return ", ".join(f"{a['aspect']} ({a['sentiment_score']:+.2f})" for a in doc["aspect_sentiments"])
+    return ", ".join(doc.get("aspects", [])) or "-"
+
 
 def main():
     try:
@@ -75,38 +68,28 @@ def main():
         )
         return
 
-    # Barra laterale dei filtri
     st.sidebar.header("🔍 Filtri di Analisi")
-    
-    # Recupero piattaforme e aspetti sanitizzati (escludendo None e stringhe vuote)
-    raw_platforms = db["silver_data"].distinct("_governance.source_platform")
-    available_platforms = sorted([p for p in raw_platforms if isinstance(p, str) and p.strip()])
+    available_platforms, available_aspects = cached_filter_options(db)
     selected_platform = st.sidebar.selectbox("Piattaforma:", ["Tutte"] + available_platforms)
-
-    raw_aspects = db["silver_data"].distinct("aspects")
-    available_aspects = sorted([a for a in raw_aspects if isinstance(a, str) and a.strip()])
     selected_aspect = st.sidebar.selectbox("Aspetto del Film (Topic):", ["Tutti"] + available_aspects)
+    if st.sidebar.button("🔄 Aggiorna dati"):
+        st.cache_data.clear()
+        st.rerun()
 
-    # Costruzione query filtro MongoDB
-    filter_query = {}
-    if selected_platform != "Tutte":
-        filter_query["_governance.source_platform"] = selected_platform
-    if selected_aspect != "Tutti":
-        filter_query["aspects"] = selected_aspect
+    metrics = cached_metrics(db, selected_platform, selected_aspect)
+    sentiment_counts = metrics["sentiment"]
+    avg_score = metrics["avg_score"]
+    aspect_metrics = metrics["aspects"]
+    language_counts = metrics["languages"]
 
-    # Metriche Gold
-    sentiment_counts, platform_counts, avg_score, aspect_metrics, language_counts = get_gold_metrics(db, filter_query)
-    
-    total_docs = sum(item["count"] for item in sentiment_counts) if sentiment_counts else 0
+    total_docs = sum(item["count"] for item in sentiment_counts)
 
-    # KPI Summary Cards
     col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
     with col_kpi1:
         st.metric(label="Totale Contributi Analizzati", value=total_docs)
     with col_kpi2:
         if avg_score and avg_score[0].get("average") is not None:
-            score = avg_score[0]["average"]
-            st.metric(label="Sentiment Score Medio", value=f"{score:+.2f}", delta=f"{score:.2f}")
+            st.metric(label="Sentiment Score Medio", value=f"{avg_score[0]['average']:+.2f}")
         else:
             st.metric(label="Sentiment Score Medio", value="N/A")
     with col_kpi3:
@@ -115,12 +98,13 @@ def main():
 
     st.markdown("---")
 
-    # Grafici Principali
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         st.subheader("📊 Distribuzione del Sentiment")
         if sentiment_counts:
             df_sent = pd.DataFrame(sentiment_counts).rename(columns={"_id": "Sentiment", "count": "Volume"})
+            order = {"Positive": 0, "Neutral": 1, "Negative": 2}
+            df_sent = df_sent.sort_values("Sentiment", key=lambda s: s.map(order))
             st.bar_chart(df_sent.set_index("Sentiment"), color="#29b5e8")
         else:
             st.info("Nessun dato per i filtri selezionati.")
@@ -128,7 +112,7 @@ def main():
     with col_g2:
         st.subheader("🎯 Aspect-Based Listening (Argomenti Trattati)")
         if aspect_metrics:
-            df_asp = pd.DataFrame(aspect_metrics).rename(columns={"_id": "Aspetto", "count": "Menzioni", "avg_score": "Score Medio"})
+            df_asp = pd.DataFrame(aspect_metrics).rename(columns={"_id": "Aspetto", "count": "Menzioni"})
             st.bar_chart(df_asp.set_index("Aspetto")["Menzioni"], color="#ff4b4b")
         else:
             st.info("Nessun aspetto rilevato con i filtri attuali.")
@@ -145,27 +129,35 @@ def main():
     with col_g4:
         st.subheader("📌 Sentiment per Singolo Aspetto")
         if aspect_metrics:
-            df_asp_score = pd.DataFrame(aspect_metrics).rename(columns={"_id": "Aspetto", "avg_score": "Score Medio (da -1 a 1)"})
-            st.dataframe(df_asp_score[["Aspetto", "Score Medio (da -1 a 1)"]], use_container_width=True, hide_index=True)
+            df_asp_score = pd.DataFrame(aspect_metrics).rename(columns={
+                "_id": "Aspetto", "avg_score": "Score Medio (da -1 a 1)",
+                "positive": "Positivi", "negative": "Negativi",
+            })
+            st.dataframe(
+                df_asp_score[["Aspetto", "Score Medio (da -1 a 1)", "Positivi", "Negativi"]],
+                use_container_width=True, hide_index=True,
+            )
         else:
             st.write("Nessun dato.")
 
     st.markdown("---")
     st.subheader("💬 Feed Commenti & Recensioni (Silver Layer Validato)")
-    recent_docs = get_filtered_documents(db, filter_query, limit=20)
-    
+    recent_docs = cached_feed(db, selected_platform, selected_aspect, 20)
+
     if recent_docs:
         df_feed = pd.DataFrame([{
             "Piattaforma": d.get("_governance", {}).get("source_platform", "").upper(),
+            "Data": (d.get("published_at") or "")[:10] or "-",
             "Lingua": d.get("language", "N/A"),
             "Sentiment": d.get("sentiment_label"),
             "Score": round(d.get("sentiment_score", 0), 2),
-            "Aspetti": ", ".join(d.get("aspects", [])) if d.get("aspects") else "-",
-            "Testo": d.get("cleaned_text")
+            "Aspetti": _format_aspects(d),
+            "Testo": d.get("cleaned_text"),
         } for d in recent_docs])
         st.dataframe(df_feed, use_container_width=True, hide_index=True)
     else:
         st.info("Nessun commento trovato per questi criteri.")
+
 
 if __name__ == "__main__":
     main()

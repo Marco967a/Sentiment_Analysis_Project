@@ -1,0 +1,226 @@
+import pytest
+
+from src.processing import sentiment
+
+
+class FakeModel:
+    def __init__(self, label="positive", score=0.9, fail_on=None):
+        self.label, self.score, self.fail_on = label, score, fail_on
+
+    def __call__(self, text, truncation=True, max_length=None):
+        if self.fail_on and self.fail_on in text:
+            raise ValueError("boom")
+        return [{"label": self.label, "score": self.score}]
+
+
+@pytest.fixture
+def fake_model(monkeypatch):
+    def install(model):
+        monkeypatch.setattr(sentiment, "get_sentiment_pipeline", lambda *args, **kwargs: model)
+    return install
+
+
+def test_label_mapping(fake_model):
+    fake_model(FakeModel("negative", 0.8))
+    assert sentiment.analyze_sentiment("bad") == (-0.8, "Negative")
+    fake_model(FakeModel("LABEL_2", 0.7))
+    assert sentiment.analyze_sentiment("good") == (0.7, "Positive")
+    fake_model(FakeModel("neutral", 0.6))
+    assert sentiment.analyze_sentiment("meh") == (0.0, "Neutral")
+
+
+def test_missing_pipeline_returns_none_not_fake_neutral(fake_model):
+    fake_model(None)
+    assert sentiment.analyze_sentiment("some text") is None
+
+
+def test_process_requires_pipeline(fake_model, db):
+    fake_model(None)
+    with pytest.raises(RuntimeError):
+        sentiment.process_unprocessed_data(db=db)
+
+
+def _raw_yt(comment_id, text):
+    return {
+        "comment_id": comment_id,
+        "text": text,
+        "published_at": "2024-01-01T00:00:00Z",
+        "_governance": {
+            "source_platform": "youtube",
+            "extraction_timestamp": "2024-01-02T00:00:00+00:00",
+            "processed": False,
+        },
+    }
+
+
+def test_processing_is_idempotent_and_marks_bronze(fake_model, db):
+    fake_model(FakeModel())
+    db["raw_youtube"].insert_many([_raw_yt("a", "great movie"), _raw_yt("b", "nice director")])
+
+    sentiment.process_unprocessed_data(db=db)
+    sentiment.process_unprocessed_data(db=db)
+
+    assert db["silver_data"].count_documents({}) == 2
+    silver = db["silver_data"].find_one({"_governance.source_id": "b"})
+    assert silver["aspects"] == ["directing"]
+    assert silver["model_name"] == sentiment.select_model(silver["language"])
+    assert silver["cleaning_version"] == sentiment.CLEANING_VERSION
+    assert silver["published_at"] == "2024-01-01T00:00:00Z"
+    assert db["raw_youtube"].count_documents({"_governance.processed": True}) == 2
+
+
+def test_failed_document_is_not_marked_and_does_not_block_others(fake_model, db):
+    fake_model(FakeModel(fail_on="poison"))
+    db["raw_youtube"].insert_many([_raw_yt("a", "poison pill"), _raw_yt("b", "fine")])
+
+    sentiment.process_unprocessed_data(db=db)
+
+    bad = db["raw_youtube"].find_one({"comment_id": "a"})
+    assert bad["_governance"]["processed"] is False
+    assert bad["_governance"]["attempts"] >= 1
+    assert "error" in bad["_governance"]
+    assert db["raw_youtube"].find_one({"comment_id": "b"})["_governance"]["processed"] is True
+    assert db["silver_data"].count_documents({}) == 1
+
+
+def test_documents_stop_being_retried_after_max_attempts(fake_model, db):
+    fake_model(FakeModel(fail_on="poison"))
+    db["raw_youtube"].insert_one(_raw_yt("a", "poison"))
+    for _ in range(sentiment.MAX_ATTEMPTS + 2):
+        sentiment.process_unprocessed_data(db=db)
+    assert db["raw_youtube"].find_one({})["_governance"]["attempts"] == sentiment.MAX_ATTEMPTS
+
+    sentiment.reset_failed(db)
+    assert "attempts" not in db["raw_youtube"].find_one({})["_governance"]
+
+
+def test_reprocess_outdated_silver(fake_model, db):
+    fake_model(FakeModel("negative", 0.5))
+    db["silver_data"].insert_one({
+        "original_text": "great director",
+        "cleaned_text": "old",
+        "sentiment_score": 0.1,
+        "sentiment_label": "Positive",
+        "cleaning_version": 1,
+        "model_name": "old-model",
+        "_governance": {"source_platform": "test", "source_id": "1", "extraction_timestamp": "x"},
+    })
+    assert sentiment.reprocess_outdated_silver(db) == 1
+    doc = db["silver_data"].find_one({})
+    assert doc["sentiment_label"] == "Negative" and doc["aspects"] == ["directing"]
+    assert sentiment.reprocess_outdated_silver(db) == 0
+
+
+def test_letterboxd_legacy_docs_without_review_id_keep_old_source_id(fake_model, db):
+    fake_model(FakeModel())
+    db["raw_letterboxd"].insert_one({
+        "film": "dune",
+        "author": "bob",
+        "text": "fine",
+        "_governance": {"source_platform": "letterboxd", "processed": False},
+    })
+    sentiment.process_unprocessed_data(db=db)
+    assert db["silver_data"].find_one({})["_governance"]["source_id"] == "dune#bob"
+
+
+def test_select_model_routes_by_language():
+    assert sentiment.select_model("en") == sentiment.MODEL_EN
+    for lang in ("it", "es", "unknown"):
+        assert sentiment.select_model(lang) == sentiment.MODEL_MULTI
+
+
+def test_enrich_uses_multilingual_model_for_italian(fake_model):
+    fake_model(FakeModel())
+    fields = sentiment.enrich("Un film bellissimo, la regia è davvero magnifica e il finale commovente.")
+    assert fields["language"] == "it"
+    assert fields["model_name"] == sentiment.MODEL_MULTI
+
+
+def test_enrich_requests_the_model_selected_for_the_language(monkeypatch):
+    requested = []
+
+    def fake_get(name=sentiment.MODEL_EN):
+        requested.append(name)
+        return FakeModel()
+
+    monkeypatch.setattr(sentiment, "get_sentiment_pipeline", fake_get)
+    sentiment.enrich("This movie has a wonderful story and the acting is great from start to end.")
+    sentiment.enrich("Un film bellissimo, la regia è davvero magnifica e il finale commovente.")
+    assert requested == [sentiment.MODEL_EN, sentiment.MODEL_MULTI]
+
+
+def test_reprocess_picks_records_with_wrong_model_for_language(fake_model, db):
+    fake_model(FakeModel())
+    base = {
+        "original_text": "x", "cleaned_text": "x", "sentiment_score": 0.1, "sentiment_label": "Positive",
+        "cleaning_version": sentiment.CLEANING_VERSION,
+    }
+    db["silver_data"].insert_many([
+        {**base, "language": "it", "model_name": sentiment.MODEL_EN,
+         "_governance": {"source_platform": "t", "source_id": "1", "extraction_timestamp": "x"}},
+        {**base, "language": "en", "model_name": sentiment.MODEL_EN,
+         "_governance": {"source_platform": "t", "source_id": "2", "extraction_timestamp": "x"}},
+    ])
+    assert sentiment.reprocess_outdated_silver(db) == 1
+
+
+class KeywordModel:
+    """Modello simulato: positivo se la frase contiene 'splendid'/'great', negativo se 'noios'/'weak'."""
+
+    def __call__(self, text, truncation=True, max_length=None):
+        low = text.lower()
+        if any(w in low for w in ("splendid", "great")):
+            return [{"label": "positive", "score": 0.9}]
+        if any(w in low for w in ("noios", "weak")):
+            return [{"label": "negative", "score": 0.8}]
+        return [{"label": "neutral", "score": 0.5}]
+
+
+def test_aspect_sentiment_is_per_clause(fake_model):
+    fake_model(KeywordModel())
+    fields = sentiment.enrich("Regia splendida ma colonna sonora noiosa.")
+    by_aspect = {a["aspect"]: a for a in fields["aspect_sentiments"]}
+    assert by_aspect["directing"]["sentiment_label"] == "Positive"
+    assert by_aspect["directing"]["sentiment_score"] == 0.9
+    assert by_aspect["soundtrack"]["sentiment_label"] == "Negative"
+    assert by_aspect["soundtrack"]["sentiment_score"] == -0.8
+    assert set(fields["aspects"]) == {"directing", "soundtrack"}
+
+
+def test_aspect_sentiment_reuses_overall_for_single_clause(fake_model):
+    calls = []
+
+    class Counting(FakeModel):
+        def __call__(self, text, **kwargs):
+            calls.append(text)
+            return super().__call__(text, **kwargs)
+
+    fake_model(Counting("negative", 0.7))
+    fields = sentiment.enrich("The director did a terrible job")
+    assert len(calls) == 1
+    assert fields["aspect_sentiments"][0]["sentiment_score"] == -0.7
+
+
+def test_aspect_sentiment_empty_without_aspects(fake_model):
+    fake_model(FakeModel())
+    assert sentiment.enrich("Nothing relevant here at all")["aspect_sentiments"] == []
+
+
+def test_failed_clause_fails_the_document(fake_model):
+    fake_model(FakeModel(fail_on="soundtrack"))
+    assert sentiment.enrich("Great direction but the soundtrack is dull") is None
+
+
+def test_opinion_only_keyword_needs_an_opinion(fake_model):
+    fake_model(FakeModel("neutral", 0.6))
+    neutral = sentiment.enrich("Ho guardato la serie in bianco e nero")
+    assert neutral["aspects"] == [] and neutral["aspect_sentiments"] == []
+
+    fake_model(FakeModel("positive", 0.9))
+    opinion = sentiment.enrich("Il bianco e nero è bellissimo")
+    assert opinion["aspects"] == ["visuals"]
+
+
+def test_strong_keyword_is_kept_even_when_neutral(fake_model):
+    fake_model(FakeModel("neutral", 0.6))
+    assert sentiment.enrich("Il regista ha girato due documentari")["aspects"] == ["directing"]

@@ -66,7 +66,7 @@ class NumberedCanvas(canvas.Canvas):
         self.line(MARGIN_X, 40, PAGE_WIDTH - MARGIN_X, 40)
 
         # Footer
-        self.drawString(MARGIN_X, 28, "Architettura Medallion • MongoDB 6.0 • Transformers RoBERTa • Streamlit")
+        self.drawString(MARGIN_X, 28, "Architettura Medallion • MongoDB 6.0 • Transformers multilingue • Streamlit")
         page_str = f"Pagina {self._pageNumber} di {total_pages}"
         self.drawRightString(PAGE_WIDTH - MARGIN_X, 28, page_str)
 
@@ -297,7 +297,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         [Paragraph("<b>Progetto:</b>", styles['CoverMetaBold']), Paragraph("Sentiment Analysis & Social Listening Hub", styles['CoverMeta'])],
         [Paragraph("<b>Architettura Dati:</b>", styles['CoverMetaBold']), Paragraph("Medallion Architecture (Bronze, Silver, Gold Layers)", styles['CoverMeta'])],
         [Paragraph("<b>Database & Storage:</b>", styles['CoverMetaBold']), Paragraph("MongoDB 6.0 con JSON Schema Validation e Indici Idempotenti", styles['CoverMeta'])],
-        [Paragraph("<b>Modello NLP:</b>", styles['CoverMetaBold']), Paragraph("Twitter-RoBERTa-Base (Cardiff NLP) • LangDetect • Aspect Mining", styles['CoverMeta'])],
+        [Paragraph("<b>Modello NLP:</b>", styles['CoverMetaBold']), Paragraph("RoBERTa EN + XLM-RoBERTa multilingue (Cardiff NLP) • LangDetect • Aspect Mining", styles['CoverMeta'])],
         [Paragraph("<b>Dashboard Web:</b>", styles['CoverMetaBold']), Paragraph("Streamlit 1.32+ con metriche Gold aggregate e filtri reattivi", styles['CoverMeta'])],
         [Paragraph("<b>Sorgenti Supportate:</b>", styles['CoverMetaBold']), Paragraph("YouTube Data API v3 (Trailer/Video) • Letterboxd BeautifulSoup Scraper (Recensioni)", styles['CoverMeta'])],
         [Paragraph("<b>Versione Documento:</b>", styles['CoverMetaBold']), Paragraph("1.0 (Guida Ufficiale di Riferimento)", styles['CoverMeta'])],
@@ -323,7 +323,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         "<b>Capitolo 3:</b> Requisiti di Sistema, Configurazione `.env` & Avvio dei Container",
         "<b>Capitolo 4:</b> Inizializzazione Database, JSON Schema Validation & Indici Idempotenti",
         "<b>Capitolo 5:</b> Pipeline di Ingestione Dati (YouTube Data API v3 & Letterboxd Scraper)",
-        "<b>Capitolo 6:</b> Pipeline NLP & Arricchimento Silver (RoBERTa, 5 Aspetti Tematici, Lingue)",
+        "<b>Capitolo 6:</b> Pipeline NLP & Arricchimento Silver (Modelli per lingua, 5 Aspetti Tematici, Sentiment per Aspetto)",
         "<b>Capitolo 7:</b> Guida Operativa alla Dashboard Streamlit & Analitiche Gold",
         "<b>Capitolo 8:</b> Risoluzione dei Problemi, Manutenzione & FAQ Operative"
     ]
@@ -347,7 +347,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     ))
     story.append(Paragraph("I punti cardine che contraddistinguono la soluzione includono:", styles['DocBody']))
     story.append(Paragraph("• <b>Rigore di Data Governance:</b> conservazione integrale del lineage di provenienza e validazione dello schema al momento della scrittura nel database.", styles['DocBullet']))
-    story.append(Paragraph("• <b>Aspect-Based Social Listening:</b> scomposizione del sentiment su 5 dimensioni verticali dell'opera (Regia, Cast, Colonna Sonora, Visivo/Estetica, Sceneggiatura/Trama).", styles['DocBullet']))
+    story.append(Paragraph("• <b>Aspect-Based Social Listening:</b> sentiment calcolato separatamente per ciascuna delle 5 dimensioni verticali dell'opera (Regia, Cast, Colonna Sonora, Visivo/Estetica, Sceneggiatura/Trama).", styles['DocBullet']))
     story.append(Paragraph("• <b>Multi-Sorgente Complementare:</b> convergenza tra piattaforme ad altissimo coinvolgimento di massa (YouTube) e community specializzate di appassionati e critici (Letterboxd).", styles['DocBullet']))
 
     story.append(Spacer(1, 4))
@@ -415,21 +415,32 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     ))
     story.append(Paragraph("<b>File di Configurazione Ambiente (<code>.env</code>):</b>", styles['DocBody']))
     env_code = [
-        "MONGODB_URI=mongodb://root:example_password@localhost:27017/",
+        "MONGO_ROOT_PASSWORD=CAMBIA_QUESTA_PASSWORD",
+        "MONGO_EXPRESS_PASSWORD=CAMBIA_QUESTA_PASSWORD",
+        "MONGODB_URI=mongodb://root:CAMBIA_QUESTA_PASSWORD@localhost:27017/",
         "MONGODB_DB_NAME=sentiment_db",
-        "YOUTUBE_API_KEY=AIzaSyBcsZVJ0ZVJqq-ESEMPIO_API_KEY",
-        "TRANSFORMERS_MODEL=cardiffnlp/twitter-roberta-base-sentiment-latest"
+        "YOUTUBE_API_KEY=INSERISCI_LA_TUA_CHIAVE_API_YOUTUBE",
+        "TRANSFORMERS_MODEL_EN=cardiffnlp/twitter-roberta-base-sentiment-latest",
+        "TRANSFORMERS_MODEL_MULTI=cardiffnlp/twitter-xlm-roberta-base-sentiment"
     ]
     story.append(make_code_box(env_code))
+    story.append(Paragraph(
+        "Ogni variabile deve comparire una sola volta: se <code>MONGODB_URI</code> è definita due volte, vale l'ultima riga. "
+        "Per usare un cluster MongoDB Atlas indicare la sua URI <code>mongodb+srv://</code>; per il database locale in Docker "
+        "usare <code>localhost</code> con la stessa password di <code>MONGO_ROOT_PASSWORD</code>. Il file <code>.env</code> "
+        "non viene mai versionato.",
+        styles['DocBody']
+    ))
 
     story.append(Spacer(1, 4))
     story.append(Paragraph("Modalità di Esecuzione Disponibili", styles['DocH2']))
     story.append(Paragraph("• <b>Modalità Docker Completa (Consigliata):</b> avvia MongoDB, Mongo Express e Dashboard Streamlit:", styles['DocBody']))
     story.append(make_code_box(["docker compose up -d"]))
-    story.append(Paragraph("• <b>Modalità Ibrida (Sviluppo Locale):</b> avvia solo il database in Docker ed esegue gli script in virtualenv:", styles['DocBody']))
+    story.append(Paragraph("Per sicurezza MongoDB (27017), Mongo Express (8081) e la dashboard (8501) sono raggiungibili solo da <code>localhost</code>.", styles['DocBody']))
+    story.append(Paragraph("• <b>Modalità Ibrida (Sviluppo Locale):</b> avvia solo il database in Docker ed esegue gli script in virtualenv. Per la pipeline NLP servono anche PyTorch e Transformers (extra <code>nlp</code>):", styles['DocBody']))
     story.append(make_code_box([
         "docker compose up -d mongodb",
-        "source venv/bin/activate && pip install -r requirements.txt"
+        "source venv/bin/activate && pip install -e \".[nlp]\""
     ]))
 
     story.append(Spacer(1, 6))
@@ -439,15 +450,15 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         "Prima di effettuare qualunque ingestione o analisi, è necessario inizializzare il database eseguendo:",
         styles['DocBody']
     ))
-    story.append(make_code_box(["python src/db/init_db.py"]))
+    story.append(make_code_box(["python -m src.db.init_db"]))
 
     story.append(Spacer(1, 4))
     story.append(Paragraph("Operazioni Eseguite da `init_db.py`", styles['DocH2']))
     story.append(Paragraph("• <b>Creazione Collezioni Bronze:</b> inizializza <code>raw_youtube</code> e <code>raw_letterboxd</code>.", styles['DocBullet']))
-    story.append(Paragraph("• <b>Schema di Validazione Rigoroso per <code>silver_data</code>:</b> impone la presenza di <code>original_text</code>, <code>cleaned_text</code>, <code>sentiment_score</code> (double compreso tra -1.0 e 1.0), <code>sentiment_label</code> (Positive, Negative, Neutral) e del blocco <code>_governance</code> completo.", styles['DocBullet']))
+    story.append(Paragraph("• <b>Schema di Validazione Rigoroso per <code>silver_data</code>:</b> impone la presenza di <code>original_text</code>, <code>cleaned_text</code>, <code>sentiment_score</code> (double compreso tra -1.0 e 1.0), <code>sentiment_label</code> (Positive, Negative, Neutral) e del blocco <code>_governance</code> completo. Il campo opzionale <code>aspect_sentiments</code> (aspetto, score, label e frase) viene validato elemento per elemento.", styles['DocBullet']))
     story.append(Paragraph("• <b>Creazione Indici Univoci di Idempotenza:</b>", styles['DocBullet']))
     story.append(Paragraph("&nbsp;&nbsp;&nbsp;&nbsp;1. <code>raw_youtube.comment_id</code> (univoco: blocca inserimenti multipli dello stesso commento).", styles['DocBullet']))
-    story.append(Paragraph("&nbsp;&nbsp;&nbsp;&nbsp;2. <code>raw_letterboxd.film + author</code> (univoco: una sola recensione per autore per film).", styles['DocBullet']))
+    story.append(Paragraph("&nbsp;&nbsp;&nbsp;&nbsp;2. <code>raw_letterboxd.film + review_id</code> (univoco: una voce per recensione; lo stesso autore può quindi recensire più volte lo stesso film).", styles['DocBullet']))
     story.append(Paragraph("&nbsp;&nbsp;&nbsp;&nbsp;3. <code>silver_data.source_platform + source_id</code> (univoco: garantisce tracciabilità e lineage privo di doppioni).", styles['DocBullet']))
     story.append(Paragraph("• <b>Indici di Performance:</b> indicizzazione di <code>aspects</code>, <code>language</code> e <code>_governance.processed</code>.", styles['DocBullet']))
 
@@ -455,7 +466,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     story.append(make_callout(
         "ATTENZIONE",
         "Regola di Robustezza dello Schema",
-        "La validazione schema opera a livello di motore MongoDB. Se un record presenta campi non conformi, viene rigettato con <code>DocumentFailedValidation</code>, preservando la pulizia del layer Silver.",
+        "La validazione schema opera a livello di motore MongoDB. Se un record presenta campi non conformi, viene rigettato con <code>DocumentFailedValidation</code>, preservando la pulizia del layer Silver. Dopo ogni aggiornamento del progetto che modifica lo schema, rieseguire <code>python -m src.db.init_db</code> (è idempotente) prima di elaborare nuovi dati.",
         "#FFFBEB", "#D97706"
     ))
 
@@ -481,12 +492,15 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     story.append(Paragraph("• <b>Paginazione Automatica:</b> supporta il superamento del limite dei 100 commenti per pagina tramite <code>pageToken</code>.", styles['DocBullet']))
     story.append(Paragraph("• <b>Campi Estratti:</b> <code>video_id</code>, <code>video_title</code>, <code>comment_id</code>, <code>author</code>, <code>text</code>, <code>like_count</code>, <code>published_at</code> e metadati <code>_governance</code>.", styles['DocBullet']))
     story.append(Paragraph("• <b>Upsert Idempotente:</b> aggiorna i metadati esistenti (es. like) senza resettare il flag di elaborazione <code>processed</code>.", styles['DocBullet']))
+    story.append(Paragraph("• <b>Campione Multilingue:</b> l'elenco dei video è in <code>config/youtube_videos.json</code>. Per bilanciare le lingue si possono aggiungere video in italiano (recensioni, reaction, trailer di Prime Video Italia): i commenti ai trailer in inglese sono molto più numerosi.", styles['DocBullet']))
 
     story.append(Spacer(1, 3))
     story.append(Paragraph("<b>Esempio di Esecuzione e Codice Python:</b>", styles['DocBody']))
     story.append(make_code_box([
-        "# Esecuzione da terminale",
-        "python src/ingestion/youtube.py",
+        "# Esecuzione da terminale (video elencati in config/youtube_videos.json)",
+        "python -m src.ingestion.youtube --max-results 300",
+        "# Oppure uno o più video specifici (ripetere --video):",
+        "python -m src.ingestion.youtube --video ID_VIDEO --max-results 100",
         "",
         "# Utilizzo come modulo per qualsiasi film/video:",
         "from src.ingestion.youtube import get_youtube_comments, save_to_bronze",
@@ -504,13 +518,14 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     story.append(Paragraph("<b>Funzionalità e Architettura:</b>", styles['DocBody']))
     story.append(Paragraph("• <b>Navigazione Pagine:</b> itera tra le pagine di recensioni ordinate per attività recente.", styles['DocBullet']))
     story.append(Paragraph("• <b>Campi Estratti:</b> <code>film</code> (slug), <code>author</code>, <code>rating</code> in stelle (es. ★★★★), <code>text</code> e <code>_governance.raw_url</code>.", styles['DocBullet']))
-    story.append(Paragraph("• <b>Deduplicazione:</b> chiave composta <code>film + author</code> per garantire unicità della voce.", styles['DocBullet']))
+    story.append(Paragraph("• <b>Deduplicazione:</b> chiave composta <code>film + review_id</code> per garantire unicità della voce.", styles['DocBullet']))
+    story.append(Paragraph("• <b>Limite Noto:</b> Letterboxd può rifiutare le richieste automatiche con <code>403 Forbidden</code>. In quel caso non si ottengono recensioni: riprovare più tardi o da un'altra rete, senza forzare il blocco.", styles['DocBullet']))
 
     story.append(Spacer(1, 3))
     story.append(Paragraph("<b>Esempio di Esecuzione e Codice Python:</b>", styles['DocBody']))
     story.append(make_code_box([
         "# Esecuzione da terminale",
-        "python src/ingestion/letterboxd.py",
+        "python -m src.ingestion.letterboxd",
         "",
         "# Utilizzo come modulo per qualsiasi film (slug URL):",
         "from src.ingestion.letterboxd import scrape_letterboxd_reviews, save_to_bronze",
@@ -539,7 +554,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         "e li salva con upsert nella collezione <code>silver_data</code>:",
         styles['DocBody']
     ))
-    story.append(make_code_box(["python src/processing/sentiment.py"]))
+    story.append(make_code_box(["python -m src.processing.sentiment"]))
 
     story.append(Spacer(1, 4))
     story.append(Paragraph("I Quattro Stadi della Pipeline NLP", styles['DocH2']))
@@ -549,7 +564,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         [
             Paragraph("1. Data Cleaning", styles['TableCellBold']),
             Paragraph("Espressioni Regolari (Regex)", styles['TableCell']),
-            Paragraph("Rimozione di link URL, tag HTML residui, simboli non convenzionali e compressione degli spazi bianchi multipli.", styles['TableCell'])
+            Paragraph("Rimozione di link URL, tag HTML residui, simboli non convenzionali e compressione degli spazi bianchi multipli. Apostrofi, virgolette e trattini tipografici (es. “l’ora”) vengono prima normalizzati, altrimenti le parole si fonderebbero (“lora”) e il modello le leggerebbe male.", styles['TableCell'])
         ],
         [
             Paragraph("2. Language Detection", styles['TableCellBold']),
@@ -559,12 +574,12 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         [
             Paragraph("3. Aspect Mining", styles['TableCellBold']),
             Paragraph("Pattern Matching bilingue (IT/EN)", styles['TableCell']),
-            Paragraph("Ricerca di keyword tematiche per attribuire ciascun commento a uno o più argomenti del vocabolario cinematografico.", styles['TableCell'])
+            Paragraph("Ricerca di keyword tematiche per attribuire ciascun commento a uno o più argomenti del vocabolario cinematografico. Il commento è diviso in frasi e nei connettivi di contrasto (ma, però, but, however): ogni aspetto riceve il sentiment della frase in cui compare. Le parole chiave ambigue (es. “bianco e nero”, “colori”) generano l'aspetto solo se la frase esprime un'opinione.", styles['TableCell'])
         ],
         [
             Paragraph("4. Sentiment Scoring", styles['TableCellBold']),
-            Paragraph("Transformer RoBERTa<br/>(Cardiff NLP)", styles['TableCell']),
-            Paragraph("Inferenza Deep Learning con mappatura su score continuo [-1.0, +1.0] e classificazione in Positive, Neutral, Negative.", styles['TableCell'])
+            Paragraph("RoBERTa (EN)<br/>XLM-RoBERTa (IT e altre)<br/>(Cardiff NLP)", styles['TableCell']),
+            Paragraph("Il modello è scelto in base alla lingua rilevata (inglese: RoBERTa; italiano e altre lingue: XLM-RoBERTa). Inferenza con mappatura su score continuo [-1.0, +1.0] e classificazione in Positive, Neutral, Negative, sia per l'intero commento sia per ogni aspetto.", styles['TableCell'])
         ]
     ]
     t_nlp = Table(nlp_phases, colWidths=[85, 115, 303])
@@ -585,7 +600,7 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
     story.append(Paragraph("• <b>directing (Regia):</b> regia, cineasta, filmmaker, visione registica, ritmo dell'opera.", styles['DocBullet']))
     story.append(Paragraph("• <b>acting (Recitazione / Cast):</b> interpretazione, attori, cast, performance dei protagonisti.", styles['DocBullet']))
     story.append(Paragraph("• <b>soundtrack (Colonna Sonora / Audio):</b> colonna sonora, brani musicali, sound design, compositore.", styles['DocBullet']))
-    story.append(Paragraph("• <b>visuals (Estetica, Fotografia & CGI):</b> cinematografia, effetti speciali, estetica, cromie, bianco e nero.", styles['DocBullet']))
+    story.append(Paragraph("• <b>visuals (Estetica, Fotografia & CGI):</b> cinematografia, effetti speciali, estetica, cromie, bianco e nero (queste ultime solo se accompagnate da un giudizio).", styles['DocBullet']))
     story.append(Paragraph("• <b>plot (Trama & Sceneggiatura):</b> storia, script, dialoghi, sviluppo dei personaggi, finale.", styles['DocBullet']))
 
     story.append(Spacer(1, 4))
@@ -594,6 +609,25 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         "Batching Automatico & Audit Trail",
         "La funzione <code>process_unprocessed_data()</code> elabora tutti i documenti Bronze pendenti a blocchi da 100 fino a conclusione. Ciascun record Bronze viene marcato con <code>_governance.processed: True</code> e relativo timestamp UTC di audit.",
         "#EFF6FF", "#2563EB"
+    ))
+
+    story.append(Spacer(1, 4))
+    story.append(Paragraph("Riprocessare i Dati Dopo una Modifica", styles['DocH2']))
+    story.append(Paragraph(
+        "Ogni record Silver registra il modello usato e la versione di pulizia (<code>cleaning_version</code>). Dopo aver cambiato modello, "
+        "vocabolario degli aspetti o logica di pulizia, incrementare <code>CLEANING_VERSION</code> in <code>sentiment.py</code> e rieseguire, "
+        "nell'ordine:",
+        styles['DocBody']
+    ))
+    story.append(make_code_box([
+        "python -m src.db.init_db",
+        "python -m src.processing.sentiment --reprocess-outdated"
+    ]))
+    story.append(Paragraph("Finché un record non è riprocessato, la dashboard usa per i suoi aspetti il sentiment dell'intero commento.", styles['DocBody']))
+    story.append(Paragraph(
+        "<b>Limiti noti:</b> un aspetto vale quanto la frase in cui compare; i contrasti senza connettivo (“Regia splendida, colonna sonora noiosa”) "
+        "e le subordinate non vengono separati; ironia e modi di dire possono essere letti male dai modelli.",
+        styles['DocBody']
     ))
 
     story.append(PageBreak())
@@ -627,15 +661,15 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         ],
         [
             Paragraph("<b>Sidebar Filtri Reattivi</b>", styles['TableCellBold']),
-            Paragraph("Filtri combinabili che ricalcolano tutte le viste in tempo reale:<br/>• <b>Piattaforma:</b> Tutte, solo YouTube, solo Letterboxd.<br/>• <b>Aspetto Tematico:</b> Tutti o focus su singola dimensione (Directing, Acting, Soundtrack, Visuals, Plot).<br/>• <b>Lingua:</b> Selezione per codice ISO (Inglese, Italiano, ecc.).", styles['TableCell'])
+            Paragraph("Filtri combinabili che ricalcolano tutte le viste in tempo reale:<br/>• <b>Piattaforma:</b> Tutte, solo YouTube, solo Letterboxd.<br/>• <b>Aspetto Tematico:</b> Tutti o focus su singola dimensione (Directing, Acting, Soundtrack, Visuals, Plot).<br/>La ripartizione per lingua è mostrata come tabella, non come filtro.", styles['TableCell'])
         ],
         [
             Paragraph("<b>Visualizzazioni Analitiche</b>", styles['TableCellBold']),
-            Paragraph("• <b>Distribuzione Sentiment:</b> conteggio suddiviso per Positive, Neutral e Negative.<br/>• <b>Gradimento per Aspetto:</b> confronto dello score medio tra le 5 aree tematiche.<br/>• <b>Ripartizione Lingue & Canali:</b> metriche di penetrazione geografica e di canale.", styles['TableCell'])
+            Paragraph("• <b>Distribuzione Sentiment:</b> conteggio suddiviso per Positive, Neutral e Negative.<br/>• <b>Gradimento per Aspetto:</b> confronto dello score medio, e dei commenti positivi e negativi, tra le 5 aree tematiche; ogni valore riguarda la frase in cui l'aspetto è citato.<br/>• <b>Ripartizione Lingue & Canali:</b> metriche di penetrazione geografica e di canale.", styles['TableCell'])
         ],
         [
             Paragraph("<b>Social Feed Interattivo</b>", styles['TableCellBold']),
-            Paragraph("Feed cronologico dei commenti completi di badge identificativi:<br/>• Origine (YouTube o Letterboxd)<br/>• Score normalizzato e classificazione (es. +0.78 Positive)<br/>• Badge lingua e tag tematici associati.", styles['TableCell'])
+            Paragraph("Feed cronologico dei commenti completi di badge identificativi:<br/>• Origine (YouTube o Letterboxd)<br/>• Score normalizzato e classificazione (es. +0.78 Positive)<br/>• Lingua e aspetti con il sentiment della propria frase (es. <code>directing (+0.91), soundtrack (-0.74)</code>).", styles['TableCell'])
         ]
     ]
     t_ui = Table(ui_table_data, colWidths=[120, 383])
@@ -697,10 +731,28 @@ def build_pdf(filename="docs/Manuale_Utente_Sentiment_Hub.pdf"):
         styles['DocBody']
     ))
 
+    story.append(Paragraph("<b>D: Errore 'DNS query name does not exist' (NXDOMAIN) con MongoDB Atlas.</b>", styles['DocH2']))
+    story.append(Paragraph(
+        "<b>R:</b> Il cluster Atlas è sospeso o eliminato (i cluster gratuiti inattivi vengono messi in pausa). Riattivarlo dalla console Atlas, oppure verificare che <code>MONGODB_URI</code> nel <code>.env</code> sia corretta e definita una sola volta.",
+        styles['DocBody']
+    ))
+
+    story.append(Paragraph("<b>D: Perché l'ingestione YouTube dice che la chiave non è configurata?</b>", styles['DocH2']))
+    story.append(Paragraph(
+        "<b>R:</b> In <code>.env</code> la variabile <code>YOUTUBE_API_KEY</code> è assente o contiene ancora il segnaposto. Creare una chiave dalla Google Cloud Console (API e servizi, YouTube Data API v3) e incollarla nel file.",
+        styles['DocBody']
+    ))
+
+    story.append(Paragraph("<b>D: Letterboxd risponde '403 Forbidden' e non scarica recensioni.</b>", styles['DocH2']))
+    story.append(Paragraph(
+        "<b>R:</b> Il sito rifiuta le richieste automatiche. Riprovare più tardi o da una rete diversa; la pipeline funziona comunque con le sole fonti YouTube.",
+        styles['DocBody']
+    ))
+
     story.append(Spacer(1, 6))
     story.append(Paragraph("Best Practice di Manutenzione & Scalabilità", styles['DocH2']))
     story.append(Paragraph("• <b>Backup del Database:</b> eseguire dump periodici con <code>docker exec sentiment_mongodb mongodump --out /data/backup</code>.", styles['DocBullet']))
-    story.append(Paragraph("• <b>Estensione Vocabolari:</b> aggiornare <code>ASPECT_KEYWORDS</code> in <code>src/processing/sentiment.py</code> per includere nuovi registi, attori o termini specifici del film in esame.", styles['DocBullet']))
+    story.append(Paragraph("• <b>Estensione Vocabolari:</b> aggiornare <code>config/aspects.yaml</code> per includere nuovi registi, attori o termini specifici del film in esame (le parole ambigue vanno in <code>opinion_only</code>), poi riprocessare i dati come descritto nel capitolo 6.", styles['DocBullet']))
     story.append(Paragraph("• <b>Integrazione Nuove Fonti:</b> definire nuove collection Bronze (es. <code>raw_imdb</code>) mantenendo il blocco <code>_governance</code> per preservare il lineage.", styles['DocBullet']))
 
     story.append(Spacer(1, 6))

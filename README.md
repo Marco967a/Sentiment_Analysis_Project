@@ -24,7 +24,7 @@ flowchart TD
     end
 
     subgraph Silver [Silver Layer - Enriched & Validated]
-        NLP[Pipeline NLP & Data Cleaning<br/>• Pulizia regex<br/>• Rilevamento lingua: langdetect<br/>• Aspect Extraction: 5 Topic<br/>• RoBERTa Sentiment Model]
+        NLP[Pipeline NLP & Data Cleaning<br/>• Pulizia regex e normalizzazione punteggiatura<br/>• Rilevamento lingua: langdetect<br/>• Aspect Extraction: 5 Topic<br/>• Sentiment multilingue con routing per lingua]
         S_DATA[(silver_data<br/>MongoDB JSON Schema Validation<br/>Unique Index: source_platform + source_id)]
     end
 
@@ -60,15 +60,20 @@ flowchart TD
   - **YouTube API v3:** estrazione commenti ordinati per rilevanza e conteggio like.
   - **Letterboxd:** crawler BeautifulSoup4 adattato al layout DOM moderno (`article.production-viewing`).
 - **Analisi Sentiment con Deep Learning:**
-  - Modello Transformer RoBERTa (`cardiffnlp/twitter-roberta-base-sentiment-latest`).
+  - Routing sulla lingua rilevata: inglese con RoBERTa (`cardiffnlp/twitter-roberta-base-sentiment-latest`), italiano e altre lingue con XLM-RoBERTa (`cardiffnlp/twitter-xlm-roberta-base-sentiment`). Entrambi sono configurabili da `.env` (`TRANSFORMERS_MODEL_EN`, `TRANSFORMERS_MODEL_MULTI`) e caricati solo quando servono.
+  - Su un campione etichettato di 72 frasi (`tests/data/sentiment_eval.csv`, riproducibile con `python scripts/benchmark_models.py`) il modello inglese raggiunge accuracy 0.97 su EN ma 0.39 su IT, mentre XLM-RoBERTa ottiene 0.83 su entrambe le lingue.
   - Score continuo normalizzato da `-1.0` (massima negatività) a `+1.0` (massima positività) con classificazione categorica (*Positive*, *Neutral*, *Negative*).
 - **Aspect-Based Social Listening:**
   - Estrazione automatica bilingue (IT/EN) degli argomenti trattati nel commento:
     - 🎬 **`directing`**: regia, filmmaker, registi (es. Villeneuve, Nolan).
     - 🎭 **`acting`**: interpretazione, cast, attori (es. Chalamet, Butler).
     - 🎵 **`soundtrack`**: colonna sonora, musica, audio (es. Hans Zimmer).
-    - 🎨 **`visuals`**: cinematografia, estetica, effetti visivi, CGI.
+    - 🎨 **`visuals`**: cinematografia, estetica, effetti visivi, CGI, fotografia (e "bianco e nero"/"colori" solo se accompagnati da un giudizio).
     - 📖 **`plot`**: trama, storia, sceneggiatura, ritmo, finale.
+  - **Sentiment per aspetto:** il commento viene diviso in frasi e, dentro la frase, nei connettivi di contrasto (*ma*, *però*, *but*, *however*…). Ogni aspetto riceve il sentiment della frase in cui compare (`aspect_sentiments`: aspetto, score, label, frase), quindi "Regia splendida ma colonna sonora noiosa" dà `directing` positivo e `soundtrack` negativo. Un commento senza divisioni riusa il sentiment complessivo, senza inferenze aggiuntive.
+  - **Keyword ambigue:** in `config/aspects.yaml` le parole elencate sotto `opinion_only` (es. "bianco e nero", "colori") generano l'aspetto solo se la frase esprime un'opinione: spesso indicano soltanto quale versione si guarda ("ho visto il bianco e nero") e gonfierebbero le menzioni neutre. Le altre parole chiave contano sempre.
+  - **Pulizia del testo:** apostrofi, virgolette e trattini tipografici (es. `l’ora`, molto frequenti nei commenti) vengono normalizzati prima dell'analisi; senza, le parole si fonderebbero ("lora") e il modello le leggerebbe male.
+  - *Limiti noti:* un aspetto vale quanto la clausola in cui compare; i contrasti senza connettivo ("Regia splendida, colonna sonora noiosa") e le subordinate ("Sebbene la regia sia ottima, la trama è debole") non vengono separati, e le clausole senza keyword ("il film è lungo") non generano aspetti.
 - **Rilevamento Automatico della Lingua:** identificazione ISO (`it`, `en`, `es`, ecc.) con libreria `langdetect`.
 - **Dashboard Interattiva in Streamlit:**
   - Filtri dinamici in sidebar per piattaforma e per singolo aspetto.
@@ -91,13 +96,13 @@ sentiment_analysis_project/
 │   └── generate_manual_pdf.py
 ├── src/
 │   ├── db/
-│   │   ├── client.py        # Client MongoDB sincrono (pymongo) e asincrono (motor)
-│   │   └── init_db.py       # Creazione collezioni, schema validation e indici univoci
+│   │   ├── client.py        # Client MongoDB condiviso (pymongo), credenziali mai loggate
+│   │   └── init_db.py       # Collezioni, schema validation (Bronze e Silver) e indici univoci, idempotente
 │   ├── ingestion/
 │   │   ├── letterboxd.py    # Scraper per Letterboxd con upsert idempotente
 │   │   └── youtube.py       # Client YouTube Data API v3 con ranking per like
 │   ├── processing/
-│   │   └── sentiment.py     # Pipeline NLP (pulizia, lingua, aspetti, RoBERTa)
+│   │   └── sentiment.py     # Pipeline NLP (pulizia, lingua, aspetti, sentiment)
 │   └── dashboard/
 │       └── app.py           # Dashboard analitica Streamlit
 ├── Dockerfile               # Build dell'immagine Streamlit
@@ -120,7 +125,7 @@ Avvia MongoDB, Mongo Express e la Dashboard Streamlit con un solo comando:
 docker compose up -d --build
 ```
 - **Dashboard Streamlit:** `http://localhost:8501`
-- **Mongo Express (Web GUI per DB):** `http://localhost:8081` (user: `admin`, pass: `admin`)
+- **Mongo Express (Web GUI per DB):** `http://localhost:8081` (credenziali: `MONGO_EXPRESS_USER` / `MONGO_EXPRESS_PASSWORD` del file `.env`)
 - **MongoDB:** `localhost:27017`
 
 ---
@@ -131,7 +136,7 @@ docker compose up -d --build
 ```bash
 docker run -d --name sentiment_mongodb -p 27017:27017 \
   -e MONGO_INITDB_ROOT_USERNAME=root \
-  -e MONGO_INITDB_ROOT_PASSWORD=example_password \
+  -e MONGO_INITDB_ROOT_PASSWORD=<la_tua_password> \
   -v sentiment_mongodb_data:/data/db \
   --restart unless-stopped mongo:6.0
 ```
@@ -142,34 +147,34 @@ python3 -m venv venv
 source venv/bin/activate  # Su Windows: venv\Scripts\activate
 
 # Per eseguire la Dashboard Streamlit e l'Ingestione:
-pip install -r requirements.txt
+pip install -e .                      # installa il pacchetto e le dipendenze
 
-# Per eseguire anche la pipeline NLP con modello RoBERTa (PyTorch):
-pip install -r requirements-nlp.txt
+# Per eseguire anche la pipeline NLP con i modelli RoBERTa/XLM-RoBERTa (PyTorch):
+pip install -e ".[nlp]"
 
 cp .env.example .env
 ```
-*(Inserire la propria `YOUTUBE_API_KEY` nel file `.env`).*
+*(Nel file `.env` inserire la propria `YOUTUBE_API_KEY` e password robuste per MongoDB: `docker compose` rifiuta di partire senza `MONGO_ROOT_PASSWORD` e `MONGO_EXPRESS_PASSWORD`).*
 
 #### 3. Inizializzare Database, Regole di Governance e Indici
 ```bash
-python src/db/init_db.py
+python -m src.db.init_db
 ```
 
 #### 4. Eseguire l'Ingestione dei Dati (Bronze Layer)
 - **Da YouTube:**
   ```bash
-  python src/ingestion/youtube.py
+  python -m src.ingestion.youtube          # video da config/youtube_videos.json, oppure --video ID
   ```
 - **Da Letterboxd:**
   ```bash
-  python src/ingestion/letterboxd.py
+  python -m src.ingestion.letterboxd --film dune-part-two --pages 2
   ```
 
 #### 5. Elaborare i Dati con la Pipeline NLP (Silver Layer)
 *(Richiede `pip install -r requirements-nlp.txt`)*
 ```bash
-python src/processing/sentiment.py
+python -m src.processing.sentiment     # opzioni: --retry-failed, --reprocess-outdated
 ```
 
 #### 6. Lanciare la Dashboard Analitica (Gold Layer)
@@ -177,6 +182,20 @@ python src/processing/sentiment.py
 streamlit run src/dashboard/app.py
 ```
 La dashboard sarà raggiungibile all'indirizzo `http://localhost:8501`.
+
+---
+
+### 🧪 Test e qualità del codice
+```bash
+pip install -e ".[dev]"
+ruff check src tests
+pytest
+```
+I test usano `mongomock` e un modello NLP simulato: non servono MongoDB né il download dei modelli. La CI (`.github/workflows/ci.yml`) esegue lint e test su ogni push su `main` e su ogni pull request, e in un job separato cerca segreti con gitleaks sull'intera storia. I falsi positivi noti sono elencati in `.gitleaksignore`.
+
+Ogni documento Bronze che fallisce l'elaborazione resta non processato, con `_governance.attempts` e `_governance.error`; dopo 3 tentativi non viene più ritentato finché non si usa `--retry-failed`. Gli aspetti si configurano in `config/aspects.yaml`.
+
+Dopo ogni modifica a schema, modelli, vocabolario degli aspetti o pulizia del testo (incrementando `CLEANING_VERSION`), eseguire in ordine `python -m src.db.init_db` (aggiorna il validatore di `silver_data`) e `python -m src.processing.sentiment --reprocess-outdated` (ricalcola i record esistenti). Finché un record non è riprocessato, la dashboard usa per i suoi aspetti il sentiment dell'intero commento.
 
 ---
 

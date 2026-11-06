@@ -3,6 +3,7 @@ FROM python:3.12-slim
 # Evita la scrittura di file .pyc e abilita log non bufferizzati
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -19,6 +20,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia il codice sorgente
 COPY src/ ./src/
 COPY config/ ./config/
+COPY .streamlit/ ./.streamlit/
+
+# Esecuzione come utente non privilegiato
+RUN useradd --create-home --uid 1000 appuser && chown -R appuser /app
+USER appuser
 
 EXPOSE 8501
 
