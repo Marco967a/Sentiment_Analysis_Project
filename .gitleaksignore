@@ -1,0 +1,5 @@
+# Falsi positivi noti di gitleaks (formato: commit:file:regola:riga).
+# Segnaposto di esempio per YOUTUBE_API_KEY nello script di generazione del manuale PDF: non è una chiave
+# reale (34 caratteri invece dei 39 di una chiave Google, contiene "ESEMPIO"). Il segnaposto è stato poi
+# sostituito da un testo non ambiguo; il fingerprint resta perché il commit è nella storia.
+a39970549efdea83450da8026c61bfcde8fb62a0:scripts/generate_manual_pdf.py:generic-api-key:420
