@@ -24,7 +24,7 @@ flowchart TD
     end
 
     subgraph Silver [Silver Layer - Enriched & Validated]
-        NLP[Pipeline NLP & Data Cleaning<br/>• Pulizia regex<br/>• Rilevamento lingua: langdetect<br/>• Aspect Extraction: 5 Topic<br/>• Sentiment multilingue con routing per lingua]
+        NLP[Pipeline NLP & Data Cleaning<br/>• Pulizia regex e normalizzazione punteggiatura<br/>• Rilevamento lingua: langdetect<br/>• Aspect Extraction: 5 Topic<br/>• Sentiment multilingue con routing per lingua]
         S_DATA[(silver_data<br/>MongoDB JSON Schema Validation<br/>Unique Index: source_platform + source_id)]
     end
 
@@ -68,9 +68,11 @@ flowchart TD
     - 🎬 **`directing`**: regia, filmmaker, registi (es. Villeneuve, Nolan).
     - 🎭 **`acting`**: interpretazione, cast, attori (es. Chalamet, Butler).
     - 🎵 **`soundtrack`**: colonna sonora, musica, audio (es. Hans Zimmer).
-    - 🎨 **`visuals`**: cinematografia, estetica, effetti visivi, CGI.
+    - 🎨 **`visuals`**: cinematografia, estetica, effetti visivi, CGI, fotografia (e "bianco e nero"/"colori" solo se accompagnati da un giudizio).
     - 📖 **`plot`**: trama, storia, sceneggiatura, ritmo, finale.
   - **Sentiment per aspetto:** il commento viene diviso in frasi e, dentro la frase, nei connettivi di contrasto (*ma*, *però*, *but*, *however*…). Ogni aspetto riceve il sentiment della frase in cui compare (`aspect_sentiments`: aspetto, score, label, frase), quindi "Regia splendida ma colonna sonora noiosa" dà `directing` positivo e `soundtrack` negativo. Un commento senza divisioni riusa il sentiment complessivo, senza inferenze aggiuntive.
+  - **Keyword ambigue:** in `config/aspects.yaml` le parole elencate sotto `opinion_only` (es. "bianco e nero", "colori") generano l'aspetto solo se la frase esprime un'opinione: spesso indicano soltanto quale versione si guarda ("ho visto il bianco e nero") e gonfierebbero le menzioni neutre. Le altre parole chiave contano sempre.
+  - **Pulizia del testo:** apostrofi, virgolette e trattini tipografici (es. `l’ora`, molto frequenti nei commenti) vengono normalizzati prima dell'analisi; senza, le parole si fonderebbero ("lora") e il modello le leggerebbe male.
   - *Limiti noti:* un aspetto vale quanto la clausola in cui compare; i contrasti senza connettivo ("Regia splendida, colonna sonora noiosa") e le subordinate ("Sebbene la regia sia ottima, la trama è debole") non vengono separati, e le clausole senza keyword ("il film è lungo") non generano aspetti.
 - **Rilevamento Automatico della Lingua:** identificazione ISO (`it`, `en`, `es`, ecc.) con libreria `langdetect`.
 - **Dashboard Interattiva in Streamlit:**
@@ -189,11 +191,11 @@ pip install -e ".[dev]"
 ruff check src tests
 pytest
 ```
-I test usano `mongomock` e un modello NLP simulato: non servono MongoDB né il download dei modelli. La CI (`.github/workflows/ci.yml`) esegue lo stesso su ogni push e pull request.
+I test usano `mongomock` e un modello NLP simulato: non servono MongoDB né il download dei modelli. La CI (`.github/workflows/ci.yml`) esegue lint e test su ogni push su `main` e su ogni pull request, e in un job separato cerca segreti con gitleaks sull'intera storia. I falsi positivi noti sono elencati in `.gitleaksignore`.
 
 Ogni documento Bronze che fallisce l'elaborazione resta non processato, con `_governance.attempts` e `_governance.error`; dopo 3 tentativi non viene più ritentato finché non si usa `--retry-failed`. Gli aspetti si configurano in `config/aspects.yaml`.
 
-Dopo l'aggiornamento allo schema con `aspect_sentiments`, eseguire in ordine `python -m src.db.init_db` (aggiorna il validatore di `silver_data`) e `python -m src.processing.sentiment --reprocess-outdated` (ricalcola i record esistenti). Finché un record non è riprocessato, la dashboard usa per i suoi aspetti il sentiment dell'intero commento.
+Dopo ogni modifica a schema, modelli, vocabolario degli aspetti o pulizia del testo (incrementando `CLEANING_VERSION`), eseguire in ordine `python -m src.db.init_db` (aggiorna il validatore di `silver_data`) e `python -m src.processing.sentiment --reprocess-outdated` (ricalcola i record esistenti). Finché un record non è riprocessato, la dashboard usa per i suoi aspetti il sentiment dell'intero commento.
 
 ---
 
